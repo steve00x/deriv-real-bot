@@ -99,7 +99,8 @@ export class Bot extends EventEmitter {
     this.emit('ready', { prices: [...this.prices], decimals: this.decimals });
     log.info(
       `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} contract=${CONTRACTS[cfg.contract ?? 'rise_fall'].name}` +
-        `${cfg.contract === 'higher_lower' ? ` barrier=${formatBarrier(cfg.barrier)} side=${cfg.tradeSide}` : ''} strategy=${this.strategy.name} ` +
+        `${cfg.contract === 'higher_lower' ? ` barrier=${formatBarrier(cfg.barrier)}` : ''}` +
+        `${cfg.tradeSide && cfg.tradeSide !== 'both' && cfg.contract !== 'even_odd' ? ` side=${cfg.tradeSide}` : ''} strategy=${this.strategy.name} ` +
         `duration=${cfg.duration}${cfg.durationUnit} stake=${cfg.stake} ${this.currency}`,
     );
 
@@ -223,7 +224,11 @@ export class Bot extends EventEmitter {
         errors.push(`${format} (${JSON.stringify(params?.barrier)}): ${err.message}`);
       }
     }
-    throw new Error(`Deriv rejected the barrier in every format:\n  ${errors.join('\n  ')}`);
+    throw new Error(
+      `Deriv rejected the barrier in every format:\n  ${errors.join('\n  ')}\n` +
+        "Deriv's current API does not seem to accept Higher/Lower barriers. The working equivalent is\n" +
+        'Rise only: set CONTRACT=rise_fall, STRATEGY=always_higher and TRADE_SIDE=higher.',
+    );
   }
 
   async placeTrade(contractType) {

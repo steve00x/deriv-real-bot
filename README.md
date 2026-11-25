@@ -46,7 +46,7 @@ The dashboard is only reachable from your own computer. When the bot stops, the 
 ## Contracts (`CONTRACT=`)
 
 - `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
-- `higher_lower`: Higher wins if the exit price ends above `entry + BARRIER`, Lower if it ends below. On exactly the barrier, both lose. The barrier is an offset such as `+0.1` or `-0.25`, and Deriv sets the payout from it: an easy barrier pays little, a hard one pays more. Deriv only accepts barriers within a range around the price, and on some markets only offers Higher/Lower for seconds or minutes, not ticks. Run `npm run contracts` to see what it offers for your `SYMBOL`, including its suggested barrier. If Deriv answers "Invalid barrier" even with its own suggestion, the bot automatically tries other barrier formats (`BARRIER_FORMAT=auto`) and keeps the one Deriv accepts; `npm run check` reports which. `TRADE_SIDE=higher` (the default) makes the bot buy **only Higher**, whatever the strategy says; use `lower` or `both` to change that.
+- `higher_lower`: **as of November 2026, Deriv's Options API rejects every Higher/Lower barrier ("Invalid barrier"), even its own suggested one, so these contracts can't be traded yet. Rise only (`CONTRACT=rise_fall`, `STRATEGY=always_higher`, `TRADE_SIDE=higher`) is the working equivalent: Higher with the barrier at the entry price.** Higher wins if the exit price ends above `entry + BARRIER`, Lower if it ends below. On exactly the barrier, both lose. The barrier is an offset such as `+0.1` or `-0.25`, and Deriv sets the payout from it: an easy barrier pays little, a hard one pays more. Deriv only accepts barriers within a range around the price, and on some markets only offers Higher/Lower for seconds or minutes, not ticks. Run `npm run contracts` to see what it offers for your `SYMBOL`, including its suggested barrier. If Deriv answers "Invalid barrier" even with its own suggestion, the bot automatically tries other barrier formats (`BARRIER_FORMAT=auto`) and keeps the one Deriv accepts; `npm run check` reports which. `TRADE_SIDE=higher` (the default) makes the bot buy **only Higher**, whatever the strategy says; use `lower` or `both` to change that.
 - `even_odd`: Even wins if the **last digit** of the exit price is even (0, 2, 4, 6, 8), Odd if it is odd. The digit is taken at the market's quoted precision, so on R_100 `428.50` ends in `0`. Duration must be 1-10 ticks.
 
 ## Strategies (`STRATEGY=`)
@@ -59,6 +59,9 @@ The dashboard is only reachable from your own computer. When the bot stops, the 
 - `rsi`: mean reversion. Buys Rise when RSI ≤ `RSI_LOW` and Fall when RSI ≥ `RSI_HIGH`.
 
 - `random`: coin flip, as a baseline.
+- `always_higher` (alias `always_rise`): buys Rise every time it may trade. Combine with `TRADE_SIDE=higher` for **Rise only**.
+
+`TRADE_SIDE=higher` (or `rise`) blocks every Fall, whatever the strategy; `lower` (or `fall`) blocks every Rise.
 
 **Higher/Lower:**
 

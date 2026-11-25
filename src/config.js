@@ -41,7 +41,9 @@ export function loadConfig(env = process.env) {
     // even_odd:     digit_contrarian | digit_follow | random
     strategy: str('STRATEGY', DEFAULT_STRATEGY[str('CONTRACT', 'rise_fall').toLowerCase()] ?? 'sma_cross'),
     barrier: str('BARRIER', '+0.1'), // Higher/Lower: offset from the entry price
-    tradeSide: str('TRADE_SIDE', 'higher').toLowerCase(), // Higher/Lower: higher (only Higher) | lower | both
+    // Rise/Fall and Higher/Lower: higher (only Rise/Higher) | lower (only Fall/Lower) | both.
+    // "rise" and "fall" work as aliases. Default: both for Rise/Fall, higher for Higher/Lower.
+    tradeSide: str('TRADE_SIDE', str('CONTRACT', 'rise_fall').toLowerCase() === 'higher_lower' ? 'higher' : 'both').toLowerCase(),
     // Higher/Lower: how to send the barrier. auto tries relative, then number, then absolute.
     barrierFormat: str('BARRIER_FORMAT', 'auto').toLowerCase(),
     digitWindow: num('DIGIT_WINDOW', 3), // same-parity digits in a row before an Even/Odd trade
@@ -84,10 +86,16 @@ export function validateConfig(cfg) {
       throw new Error('BARRIER must be a non-zero offset such as +0.1 or -0.25 (0 is just Rise/Fall)');
     }
     cfg.barrier = /^[+-]/.test(cfg.barrier) ? cfg.barrier : `+${cfg.barrier}`;
-    if (!['higher', 'lower', 'both'].includes(cfg.tradeSide)) throw new Error('TRADE_SIDE must be higher, lower or both');
     if (!['auto', 'relative', 'relative_number', 'absolute'].includes(cfg.barrierFormat)) {
       throw new Error('BARRIER_FORMAT must be auto, relative, relative_number or absolute');
     }
+  }
+  if (cfg.contract === 'rise_fall' || cfg.contract === 'higher_lower') {
+    cfg.tradeSide = { rise: 'higher', up: 'higher', fall: 'lower', down: 'lower' }[cfg.tradeSide] ?? cfg.tradeSide;
+    if (!['higher', 'lower', 'both'].includes(cfg.tradeSide)) {
+      throw new Error('TRADE_SIDE must be higher (or rise), lower (or fall), or both');
+    }
+    cfg.strategy = { always_rise: 'always_higher', always_fall: 'always_lower' }[cfg.strategy] ?? cfg.strategy;
     const opposite = { higher: 'always_lower', lower: 'always_higher' }[cfg.tradeSide];
     if (cfg.strategy === opposite) {
       throw new Error(`STRATEGY=${opposite} never trades when TRADE_SIDE=${cfg.tradeSide}`);

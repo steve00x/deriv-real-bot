@@ -2,7 +2,7 @@
 // Listens on 127.0.0.1 only, so it is reachable from this computer and nowhere else.
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
-import { CONTRACTS, lastDigit } from './contracts.js';
+import { CONTRACTS, labelFor, lastDigit } from './contracts.js';
 
 const PAGE = readFileSync(new URL('./dashboard.html', import.meta.url), 'utf8');
 const MAX_PRICES = 300;
@@ -83,7 +83,8 @@ export class DashboardState {
         contractName: CONTRACTS[c.contract ?? 'rise_fall'].name,
         strategy: c.strategy,
         barrier: c.contract === 'higher_lower' ? c.barrier : null,
-        tradeSide: c.contract === 'higher_lower' ? c.tradeSide : null,
+        tradeSide: c.contract !== 'even_odd' ? c.tradeSide : null,
+        sideLabel: c.contract !== 'even_odd' && c.tradeSide !== 'both' ? labelFor(c.contract, c.tradeSide === 'higher' ? 'CALL' : 'PUT') : null,
         symbol: c.symbol,
         duration: `${c.duration}${c.durationUnit}`,
         stake: c.stake,

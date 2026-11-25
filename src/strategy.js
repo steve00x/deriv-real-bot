@@ -165,17 +165,20 @@ export class SideFilter {
   }
 }
 
-/** Strategies that make sense for a contract (and Higher/Lower trade side). */
+const hasSides = (cfg) => (cfg.contract ?? 'rise_fall') === 'rise_fall' || cfg.contract === 'higher_lower';
+
+/** Strategies that make sense for a contract (and trade side). */
 export function strategiesFor(cfg) {
   const list = STRATEGIES[cfg.contract ?? 'rise_fall'];
-  if (cfg.contract !== 'higher_lower') return list;
+  if (!hasSides(cfg)) return list;
   if (cfg.tradeSide === 'higher') return list.filter((n) => n !== 'always_lower');
   if (cfg.tradeSide === 'lower') return list.filter((n) => n !== 'always_higher');
   return list;
 }
 
 export const STRATEGIES = {
-  rise_fall: ['sma_cross', 'momentum', 'rsi', 'random'],
+  // always_higher on Rise/Fall = buy Rise every time ("price ends higher than entry").
+  rise_fall: ['sma_cross', 'momentum', 'rsi', 'random', 'always_higher', 'always_lower'],
   // Higher/Lower uses CALL/PUT like Rise/Fall, so the price strategies work too.
   higher_lower: ['always_higher', 'always_lower', 'sma_cross', 'momentum', 'rsi', 'random'],
   even_odd: ['digit_contrarian', 'digit_follow', 'random'],
@@ -183,7 +186,7 @@ export const STRATEGIES = {
 
 export function buildStrategy(cfg, name = cfg.strategy) {
   const strategy = buildRawStrategy(cfg, name);
-  const side = { higher: 'CALL', lower: 'PUT' }[cfg.contract === 'higher_lower' ? cfg.tradeSide : null];
+  const side = hasSides(cfg) ? { higher: 'CALL', lower: 'PUT' }[cfg.tradeSide] : null;
   return side ? new SideFilter(strategy, side) : strategy;
 }
 

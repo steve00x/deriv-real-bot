@@ -133,7 +133,7 @@ export function formatReport(results, { symbol, ticks, duration, payout, contrac
 
   const out = [
     `Backtest: ${ticks} ticks of ${symbol}, ${duration}-tick ${CONTRACTS[contract].name}` +
-      `${barrier ? ` (barrier ${barrier})` : ''}${side && side !== 'both' ? `, ${side.toUpperCase()} only` : ''}, stake 1`,
+      `${barrier ? ` (barrier ${barrier})` : ''}${side && side !== 'both' ? `, ${labelFor(contract, side === 'higher' ? 'CALL' : 'PUT')} only` : ''}, stake 1`,
     ...(typeof payout === 'number'
       ? [`A win pays +${payout}; break-even win rate ${pct(1 / (1 + payout))}`]
       : CONTRACTS[contract].types.map(
@@ -279,7 +279,7 @@ export async function main(argv = process.argv.slice(2)) {
     payout,
     contract: cfg.contract,
     barrier: barrier ? cfg.barrier : null,
-    side: cfg.contract === 'higher_lower' ? cfg.tradeSide : null,
+    side: cfg.contract !== 'even_odd' ? cfg.tradeSide : null,
   };
   console.log(`\n${formatReport(results, meta)}`);
 }

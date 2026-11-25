@@ -383,7 +383,8 @@
     const c = S.config, r = S.risk, cur = S.account?.currency || '';
 
     // header
-    const hl = c.barrier ? ` (barrier ${c.barrier}${c.tradeSide !== 'both' ? `, ${c.tradeSide.toUpperCase()} only` : ''})` : '';
+    const parts = [c.barrier && `barrier ${c.barrier}`, c.sideLabel && `${c.sideLabel} only`].filter(Boolean);
+    const hl = parts.length ? ` (${parts.join(', ')})` : '';
     $('subtitle').textContent = `${c.contractName}${hl} · ${c.strategy} · ${c.symbol} · ${c.duration} · stake ${c.stake}` +
       (S.account ? ` · ${S.account.id}` : '');
     const st = $('status');
