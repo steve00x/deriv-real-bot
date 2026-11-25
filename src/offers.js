@@ -3,6 +3,7 @@
 //
 //   npm run contracts                     (uses SYMBOL from .env)
 //   npm run contracts -- --symbol 1HZ100V
+//   npm run contracts -- --probe          (also try quotes to find what Deriv accepts)
 import { formatBarrier } from './contracts.js';
 
 /** First array of objects that look like contract offers. */
@@ -119,6 +120,47 @@ export async function explainHigherLower(client, cfg, print = console.log) {
   return options;
 }
 
+/** Quote requests to try, to learn what Deriv accepts for Higher/Lower. */
+export function probeVariants(cfg) {
+  const sym = cfg.api === 'legacy' ? { symbol: cfg.symbol } : { underlying_symbol: cfg.symbol };
+  const base = { proposal: 1, amount: 1, basis: 'stake', currency: cfg.currency, ...sym };
+  const b = formatBarrier(cfg.barrier);
+  const call = (duration, unit, extra = {}) => ({ ...base, contract_type: 'CALL', duration, duration_unit: unit, ...extra });
+  return [
+    ['Rise, 5 ticks, no barrier (baseline)', call(5, 't')],
+    [`Higher, 5 ticks, barrier ${b}`, call(5, 't', { barrier: b })],
+    [`Higher, 1 tick, barrier ${b}`, call(1, 't', { barrier: b })],
+    [`Higher, 10 ticks, barrier ${b}`, call(10, 't', { barrier: b })],
+    ['Higher, 5 ticks, barrier +0.50', call(5, 't', { barrier: '+0.50' })],
+    ['Higher, 5 ticks, barrier -0.07', call(5, 't', { barrier: '-0.07' })],
+    [`Higher, 5 ticks, barrier ${b}, product_type basic`, call(5, 't', { barrier: b, product_type: 'basic' })],
+    ['Higher, 15 seconds, barrier +0.25', call(15, 's', { barrier: '+0.25' })],
+    ['Higher, 1 minute, barrier +0.25', call(1, 'm', { barrier: '+0.25' })],
+    ['Higher, 5 minutes, barrier +0.50', call(5, 'm', { barrier: '+0.50' })],
+  ];
+}
+
+/** Run every probe and print what Deriv answered. Nothing is bought. */
+export async function probeHigherLower(client, cfg, print = console.log) {
+  const offers = await fetchOffers(client, cfg.symbol).catch(() => []);
+  const tick = offers.find((o) => o.contract_type === 'CALL' && isHigherLower(o) && (o.expiry_type === 'tick' || /t$/.test(o.min_contract_duration ?? '')));
+  print(`\nDeriv's description of tick Higher on ${cfg.symbol}:`);
+  print(tick ? JSON.stringify(tick, null, 2).replace(/^/gm, '  ') : '  (not found)');
+  print('\nQuote probes (nothing is bought):');
+  const results = [];
+  for (const [label, req] of probeVariants(cfg)) {
+    try {
+      const { proposal } = await client.request(req, 15_000);
+      results.push({ label, ok: true, payout: Number(proposal.payout) });
+      print(`  OK    ${label}: payout ${proposal.payout}`);
+    } catch (err) {
+      results.push({ label, ok: false, error: err.message });
+      print(`  FAIL  ${label}: ${err.message}`);
+    }
+  }
+  return results;
+}
+
 async function main(argv = process.argv.slice(2)) {
   const { loadConfig } = await import('./config.js');
   const { DerivClient } = await import('./derivClient.js');
@@ -134,6 +176,7 @@ async function main(argv = process.argv.slice(2)) {
   );
   try {
     await explainHigherLower(client, cfg);
+    if (argv.includes('--probe')) await probeHigherLower(client, cfg);
   } finally {
     client.close();
   }

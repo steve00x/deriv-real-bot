@@ -62,3 +62,24 @@ test('explainHigherLower prints the table and advice', async () => {
   assert.match(text, /Higher\/Lower contracts Deriv offers on R_100/);
   assert.match(text, /-> .*suggested barrier/);
 });
+
+test('probe tries each variant, reports OK/FAIL, and never buys', async () => {
+  const { probeHigherLower } = await import('../src/offers.js');
+  const sent = [];
+  const client = {
+    async request(p) {
+      sent.push(p);
+      if (p.contracts_for) return SAMPLE;
+      if (p.barrier && p.duration_unit === 't') throw new Error('ContractBuyValidationError: Invalid barrier.');
+      return { proposal: { payout: 1.9 } };
+    },
+  };
+  const out = [];
+  const results = await probeHigherLower(client, { symbol: 'R_100', currency: 'USD', barrier: '+0.07', api: 'new' }, (l) => out.push(l));
+  assert.ok(!sent.some((p) => p.buy), 'never buys');
+  assert.ok(sent.filter((p) => p.proposal).every((p) => p.underlying_symbol === 'R_100'));
+  assert.equal(results.find((r) => /baseline/.test(r.label)).ok, true);
+  assert.equal(results.find((r) => /Higher, 5 ticks, barrier \+0\.07$/.test(r.label)).ok, false);
+  assert.equal(results.find((r) => /15 seconds/.test(r.label)).ok, true);
+  assert.match(out.join('\n'), /FAIL  Higher, 5 ticks, barrier \+0\.07: ContractBuyValidationError/);
+});
