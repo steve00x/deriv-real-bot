@@ -38,6 +38,10 @@ test('labels and barrier formatting', () => {
   assert.equal(labelFor('rise_fall', 'CALL'), 'RISE');
   assert.equal(formatBarrier('0.1'), '+0.1');
   assert.equal(formatBarrier('-0.1'), '-0.1');
+  assert.equal(formatBarrier('+0.1', 2), '+0.10');
+  assert.equal(formatBarrier('-0.25', 3), '-0.250');
+  assert.equal(formatBarrier('+0.15', 1), '+0.15');
+  assert.equal(formatBarrier('+0.1', 0), '+0.1');
 });
 
 test('always_higher buys HIGHER with the barrier in live params', async () => {
@@ -67,7 +71,7 @@ test('always_higher buys HIGHER with the barrier in live params', async () => {
   await new Promise((r) => setImmediate(r));
   const buy = sent.find((p) => p.buy);
   assert.equal(buy.parameters.contract_type, 'CALL');
-  assert.equal(buy.parameters.barrier, '+0.1');
+  assert.equal(buy.parameters.barrier, '+0.1'); // never rounded away, even if prices look whole
   streams.poc({ proposal_open_contract: { is_sold: 1, profit: '1.40', entry_spot: 4, exit_spot: 4.2 } });
   await new Promise((r) => setImmediate(r));
   assert.equal(risk.profit, 1.4);
@@ -129,7 +133,7 @@ test('quotePayouts asks Deriv for both sides with the barrier', async () => {
   };
   const payout = await quotePayouts(client, hl(), { info() {}, warn() {} });
   assert.ok(Math.abs(payout.CALL - 1.2) < 1e-9 && Math.abs(payout.PUT - 0.6) < 1e-9);
-  assert.ok(sent.every((p) => p.barrier === '+0.1'));
+  assert.ok(sent.every((p) => p.barrier === '+0.10'));
 });
 
 test('TRADE_SIDE=higher (the default) never trades Lower, whatever the strategy', () => {

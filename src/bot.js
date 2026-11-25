@@ -135,6 +135,9 @@ export class Bot extends EventEmitter {
     this.busy = true;
     this.placeTrade(signal).catch((err) => {
       this.log.error(`Trade failed: ${err.message}`);
+      if (/barrier/i.test(err.message)) {
+        this.log.error('Run "npm run contracts" to see which barriers and durations Deriv accepts for this market.');
+      }
       this.emit('trade-error', { message: err.message, time: Date.now() });
       this.paperTrade = null;
       this.busy = false;
@@ -149,7 +152,7 @@ export class Bot extends EventEmitter {
 
   contractParams(contractType, stake) {
     const { cfg } = this;
-    const barrier = cfg.contract === 'higher_lower' ? { barrier: formatBarrier(cfg.barrier) } : {};
+    const barrier = cfg.contract === 'higher_lower' ? { barrier: formatBarrier(cfg.barrier, this.decimals) } : {};
     return {
       ...barrier,
       amount: stake,

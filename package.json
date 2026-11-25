@@ -4,11 +4,14 @@
   "description": "Automated Rise/Fall trading bot for Deriv (paper trading by default)",
   "type": "module",
   "main": "src/index.js",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/index.js",
     "backtest": "node --env-file-if-exists=.env src/backtest.js",
     "check": "node --env-file-if-exists=.env src/check.js",
+    "contracts": "node --env-file-if-exists=.env src/offers.js",
     "test": "node --test"
   },
   "license": "MIT"

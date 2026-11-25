@@ -46,7 +46,7 @@ The dashboard is only reachable from your own computer. When the bot stops, the 
 ## Contracts (`CONTRACT=`)
 
 - `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
-- `higher_lower`: Higher wins if the exit price ends above `entry + BARRIER`, Lower if it ends below. On exactly the barrier, both lose. The barrier is an offset such as `+0.1` or `-0.25`, and Deriv sets the payout from it: an easy barrier pays little, a hard one pays more. `TRADE_SIDE=higher` (the default) makes the bot buy **only Higher**, whatever the strategy says; use `lower` or `both` to change that.
+- `higher_lower`: Higher wins if the exit price ends above `entry + BARRIER`, Lower if it ends below. On exactly the barrier, both lose. The barrier is an offset such as `+0.1` or `-0.25`, and Deriv sets the payout from it: an easy barrier pays little, a hard one pays more. Deriv only accepts barriers within a range around the price, and on some markets only offers Higher/Lower for seconds or minutes, not ticks. Run `npm run contracts` to see what it offers for your `SYMBOL`, including its suggested barrier. `TRADE_SIDE=higher` (the default) makes the bot buy **only Higher**, whatever the strategy says; use `lower` or `both` to change that.
 - `even_odd`: Even wins if the **last digit** of the exit price is even (0, 2, 4, 6, 8), Odd if it is odd. The digit is taken at the market's quoted precision, so on R_100 `428.50` ends in `0`. Duration must be 1-10 ticks.
 
 ## Strategies (`STRATEGY=`)

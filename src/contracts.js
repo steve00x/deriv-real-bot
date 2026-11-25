@@ -24,10 +24,19 @@ export function labelFor(contract, contractType) {
   return LABELS[contractType] ?? contractType;
 }
 
-/** Normalise a barrier offset to Deriv's signed string form: 0.1 -> "+0.1". */
-export function formatBarrier(barrier) {
-  const s = String(barrier).trim();
-  return /^[+-]/.test(s) ? s : `+${s}`;
+/**
+ * Deriv's signed barrier form: 0.1 -> "+0.1". With `decimals`, pad to the
+ * market's precision: (0.1, 2) -> "+0.10".
+ */
+export function formatBarrier(barrier, decimals = null) {
+  const raw = String(barrier).trim();
+  const n = Number(raw);
+  if (decimals != null && Number.isFinite(n)) {
+    // Never drop the barrier's own digits (0.15 must not become 0.2 or 0).
+    const own = (raw.split('.')[1] ?? '').length;
+    return (n >= 0 ? '+' : '-') + Math.abs(n).toFixed(Math.max(decimals, own));
+  }
+  return /^[+-]/.test(raw) ? raw : `+${raw}`;
 }
 
 /** Last digit of a price shown to `decimals` places (trailing zeros count). */
