@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { backtest, RandomStrategy, formatReport, fetchHistory, verdict } from '../src/backtest.js';
+import { backtest, RandomStrategy, formatReport, fetchHistory, verdict, describeData } from '../src/backtest.js';
 import { MomentumStrategy } from '../src/strategy.js';
 
 const always = (signal) => ({ name: signal, minHistory: 1, decide: () => signal });
@@ -51,20 +51,37 @@ test('report shows break-even and a verdict per strategy', () => {
   assert.match(text, /too few trades to judge/);
 });
 
-test('fetchHistory pages backwards and keeps ticks in time order', async () => {
-  const all = Array.from({ length: 12_000 }, (_, i) => i); // price = epoch = index
+test('fetchHistory keeps paging when Deriv returns fewer ticks than asked', async () => {
+  const all = Array.from({ length: 12_000 }, (_, i) => i + 1); // price = epoch
   const calls = [];
   const client = {
     async request(p) {
       calls.push(p);
-      const end = p.end === 'latest' ? all.length - 1 : p.end;
-      const slice = all.slice(Math.max(0, end - p.count + 1), end + 1);
+      const end = p.end === 'latest' ? all.length : p.end;
+      const n = Math.min(p.count, 2000); // Options API cap
+      const slice = all.filter((t) => t <= end).slice(-n);
       return { history: { prices: slice, times: slice } };
     },
   };
-  const prices = await fetchHistory(client, 'R_100', 12_000, { info() {} });
-  assert.equal(prices.length, 12_000);
-  assert.deepEqual(prices.slice(0, 3), [0, 1, 2]);
-  assert.equal(prices.at(-1), 11_999);
-  assert.deepEqual(calls.map((c) => c.count), [5000, 5000, 2000]);
+  const { prices, times } = await fetchHistory(client, 'R_100', 5000, { info() {} });
+  assert.equal(prices.length, 5000);
+  assert.deepEqual(prices.slice(0, 2), [7001, 7002]);
+  assert.equal(prices.at(-1), 12_000);
+  assert.deepEqual(times, prices);
+  assert.equal(calls.length, 3);
+});
+
+test('fetchHistory stops when there is no older data', async () => {
+  const client = { request: async () => ({ history: { prices: [1, 2], times: [10, 11] } }) };
+  const { prices } = await fetchHistory(client, 'R_100', 5000, { info() {} });
+  assert.deepEqual(prices, [1, 2]);
+});
+
+test('ties are counted and reported', () => {
+  const r = backtest([5, 5, 5, 5, 6, 6], always('CALL'), { duration: 1, cooldown: 0 });
+  assert.equal(r.trades, 2);
+  assert.equal(r.ties, 1);
+  const text = formatReport([r], { symbol: 'X', ticks: 6, duration: 1, payout: 0.95 });
+  assert.match(text, /ties/);
+  assert.match(describeData([1, 1, 2], [0, 60, 120]), /50\.0% of ticks unchanged/);
 });

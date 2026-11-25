@@ -47,6 +47,7 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
   let streak = 0;
   let maxLosingStreak = 0;
   let calls = 0;
+  let ties = 0;
 
   // Strategies only look at their last `minHistory` ticks; pass a short window
   // (with one spare tick) instead of copying the whole history every step.
@@ -61,6 +62,7 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
     const entryIdx = i + 1;
     const exitIdx = entryIdx + duration;
     const won = riseFallOutcome(signal, prices[entryIdx], prices[exitIdx]) === 'won';
+    if (prices[entryIdx] === prices[exitIdx]) ties += 1;
 
     trades += 1;
     if (signal === 'CALL') calls += 1;
@@ -92,6 +94,8 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
     maxDrawdown: Math.round(maxDrawdown * 100) / 100,
     maxLosingStreak,
     riseShare: trades ? calls / trades : 0,
+    ties,
+    tieRate: trades ? ties / trades : 0,
     breakEven,
     z,
   };
@@ -112,13 +116,14 @@ export function formatReport(results, { symbol, ticks, duration, payout }) {
     r.name,
     String(r.trades),
     pct(r.winRate),
+    pct(r.tieRate),
     money(r.profit),
     money(r.perTrade),
     r.maxDrawdown.toFixed(2),
     String(r.maxLosingStreak),
     verdict(r),
   ]);
-  const header = ['strategy', 'trades', 'win rate', 'profit', 'per trade', 'max drawdown', 'worst streak', 'verdict'];
+  const header = ['strategy', 'trades', 'win rate', 'ties', 'profit', 'per trade', 'max drawdown', 'worst streak', 'verdict'];
   const widths = header.map((h, c) => Math.max(h.length, ...rows.map((row) => row[c].length)));
   const line = (cells) => cells.map((cell, c) => cell.padEnd(widths[c])).join('  ');
 
@@ -130,27 +135,52 @@ export function formatReport(results, { symbol, ticks, duration, payout }) {
     line(widths.map((w) => '-'.repeat(w))),
     ...rows.map(line),
     '',
+    'ties = exit price equal to entry price; Rise/Fall loses on a tie, whichever side you pick.',
     'max drawdown = biggest drop from a profit peak, in stake units; worst streak = most losses in a row.',
     'A strategy only "beats break-even" if its win rate is at least 2 standard errors above it.',
   ];
   return out.join('\n');
 }
 
-/** Download up to `total` ticks, paging backwards 5000 at a time (Deriv's per-request limit). */
+/**
+ * Download up to `total` ticks, paging backwards. Deriv caps each request
+ * (5000 on the legacy API, fewer on the Options API), so keep paging until
+ * no older ticks come back. Ticks are de-duplicated by time and sorted oldest first.
+ */
 export async function fetchHistory(client, symbol, total, log) {
-  let prices = [];
+  const byTime = new Map();
   let end = 'latest';
-  while (prices.length < total) {
-    const count = Math.min(5000, total - prices.length);
+  while (byTime.size < total) {
+    const count = Math.min(5000, total - byTime.size);
     const { history } = await client.request({ ticks_history: symbol, end, count, style: 'ticks' });
-    const batch = history.prices.map(Number);
-    if (!batch.length) break;
-    prices = batch.concat(prices);
-    log.info(`Downloaded ${prices.length}/${total} ticks`);
-    if (batch.length < count) break; // no older data
-    end = history.times[0] - 1;
+    const prices = (history?.prices ?? []).map(Number);
+    const times = (history?.times ?? []).map(Number);
+    if (!prices.length || times.length !== prices.length) break;
+    const before = byTime.size;
+    times.forEach((t, k) => byTime.set(t, prices[k]));
+    log.info(`Downloaded ${byTime.size}/${total} ticks`);
+    const oldest = Math.min(...times);
+    if (byTime.size === before || !(oldest > 0)) break; // no older data
+    end = oldest - 1;
   }
-  return prices;
+  const sorted = [...byTime.entries()].sort((a, b) => a[0] - b[0]);
+  return {
+    prices: sorted.slice(-total).map(([, p]) => p),
+    times: sorted.slice(-total).map(([t]) => t),
+  };
+}
+
+/** Quick sanity check of the downloaded data. */
+export function describeData(prices, times) {
+  let unchanged = 0;
+  for (let k = 1; k < prices.length; k++) if (prices[k] === prices[k - 1]) unchanged += 1;
+  const span = times.length > 1 ? (times.at(-1) - times[0]) / 60 : 0;
+  const decimals = Math.max(...prices.slice(0, 200).map((p) => (String(p).split('.')[1] ?? '').length));
+  return (
+    `Data: ${prices.length} ticks over ${span.toFixed(0)} min, ` +
+    `${((unchanged / Math.max(1, prices.length - 1)) * 100).toFixed(1)}% of ticks unchanged from the previous one, ` +
+    `prices shown to ${decimals} decimals`
+  );
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -173,12 +203,14 @@ export async function main(argv = process.argv.slice(2)) {
       ? LEGACY_HOSTS.map((h) => `wss://${h}/websockets/v3?app_id=${cfg.appId}`)
       : [publicWsUrl(cfg)];
   await client.connect(urls);
-  let prices;
+  let data;
   try {
-    prices = await fetchHistory(client, symbol, ticks, log);
+    data = await fetchHistory(client, symbol, ticks, log);
   } finally {
     client.close();
   }
+  const { prices } = data;
+  log.info(describeData(prices, data.times));
 
   const opts = { duration: cfg.duration, cooldown: cfg.cooldownTicks, payout: cfg.paperPayout };
   const results = allStrategies(cfg).map((s) => backtest(prices, s, opts));
