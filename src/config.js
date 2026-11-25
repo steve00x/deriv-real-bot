@@ -11,13 +11,16 @@ export function loadConfig(env = process.env) {
 
   return {
     // Connection
-    appId: str('DERIV_APP_ID', '1089'), // Deriv's public test app id; register your own at api.deriv.com
-    apiToken: str('DERIV_API_TOKEN', ''),
-    endpoint: str('DERIV_ENDPOINT', 'ws.derivws.com'),
+    api: str('DERIV_API', 'new').toLowerCase(), // new = current Options API, legacy = old websockets/v3
+    apiHost: str('DERIV_API_HOST', 'api.derivws.com'),
+    appId: str('DERIV_APP_ID', ''), // register yours at https://developers.deriv.com
+    apiToken: str('DERIV_API_TOKEN', ''), // Personal Access Token
+    accountId: str('DERIV_ACCOUNT_ID', ''), // optional; defaults to your demo account
 
     // Mode
     paper: bool('PAPER_TRADING', 'true'), // simulate trades, never send a buy
     allowRealAccount: bool('ALLOW_REAL_ACCOUNT', 'false'),
+    paperPayout: num('PAPER_PAYOUT', 0.95), // profit per 1 staked on a win, if Deriv won't quote one
 
     // Contract
     symbol: str('SYMBOL', 'R_100'), // Volatility 100 Index
@@ -47,7 +50,12 @@ export function loadConfig(env = process.env) {
 }
 
 export function validateConfig(cfg) {
+  if (!['new', 'legacy'].includes(cfg.api)) throw new Error('DERIV_API must be "new" or "legacy"');
   if (!cfg.paper && !cfg.apiToken) throw new Error('DERIV_API_TOKEN is required when PAPER_TRADING=false');
+  if (cfg.api === 'legacy' && !cfg.appId) cfg.appId = '1089'; // Deriv's old public test id
+  if (!cfg.paper && cfg.api === 'new' && !cfg.appId) {
+    throw new Error('DERIV_APP_ID is required for live trading. Register an app at https://developers.deriv.com');
+  }
   if (cfg.paper && cfg.durationUnit !== 't') throw new Error('Paper trading only supports tick durations (DURATION_UNIT=t)');
   if (cfg.stake <= 0 || cfg.maxStake < cfg.stake) throw new Error('STAKE must be > 0 and MAX_STAKE >= STAKE');
   if (cfg.martingale < 1) throw new Error('MARTINGALE must be >= 1');

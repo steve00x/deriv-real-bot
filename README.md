@@ -2,7 +2,7 @@
 
 An automated trading bot for Deriv **Rise/Fall** contracts, written in plain JavaScript (Node.js 22+, no dependencies).
 
-It streams live ticks over the [Deriv WebSocket API](https://api.deriv.com), asks a strategy whether to buy **Rise** (`CALL`) or **Fall** (`PUT`), and places the trade — or simulates it in paper mode — while a risk manager enforces stake size and stop conditions.
+It streams live ticks over the [Deriv Options API](https://developers.deriv.com/docs/options/), asks a strategy whether to buy **Rise** (`CALL`) or **Fall** (`PUT`), and places the trade — or simulates it in paper mode — while a risk manager enforces stake size and stop conditions.
 
 > ⚠️ **Risk warning.** Rise/Fall contracts pay less than 1:1 (about 0.95 per 1 staked), so you need to win more than ~51% of trades just to break even. The Volatility indices are random by design, so no indicator gives a reliable edge on them. Treat this as a tool for experimenting: run it in paper mode and on a demo account first, and only risk money you can afford to lose.
 
@@ -18,11 +18,18 @@ npm test
 
 | Mode | Settings | What happens |
 |---|---|---|
-| Paper (default) | `PAPER_TRADING=true` | Uses the live price feed and real Deriv payout quotes, settles trades locally. Never buys. |
-| Live, demo | `PAPER_TRADING=false`, demo `DERIV_API_TOKEN` | Places real contracts on your virtual account. |
+| Paper (default) | `PAPER_TRADING=true` | Connects to Deriv's public market-data feed (no account needed), settles simulated trades locally. Never buys. |
+| Live, demo | `PAPER_TRADING=false` + `DERIV_APP_ID` + `DERIV_API_TOKEN` | Places real contracts on your demo account. |
 | Live, real money | also `ALLOW_REAL_ACCOUNT=true` | Off by default. The bot refuses a real account unless you set this. |
 
-Get a token at https://app.deriv.com/account/api-token with the **Read** and **Trade** scopes. Keep it in `.env`, which is git-ignored.
+## Connecting to Deriv
+
+Deriv replaced the old `wss://ws.derivws.com/websockets/v3?app_id=1089` endpoint with the **Options API** at `api.derivws.com`. The old endpoint now often fails with `HTTP 520`.
+
+- **Paper mode** uses the public feed `wss://api.derivws.com/trading/v1/options/ws/public`. No login is needed.
+- **Live mode** sends your Personal Access Token and App ID to `GET /trading/v1/options/accounts`. It picks your demo account (or `DERIV_ACCOUNT_ID`), then calls `POST /accounts/{id}/otp` to get a one-time WebSocket URL. That URL is valid for 120 seconds and can be used once.
+
+To set up live trading, register an app and create a token (Trade scope) at https://developers.deriv.com, then put both in `.env`. Keep `.env` private; it is git-ignored. `DERIV_API=legacy` switches back to the old endpoint if you need it.
 
 ## Strategies (`STRATEGY=`)
 
@@ -43,7 +50,8 @@ src/index.js        entry point
 src/bot.js          trading loop, paper and live execution
 src/strategy.js     signal generators
 src/risk.js         stake sizing and stop rules
-src/derivClient.js  WebSocket API client (req_id routing, subscriptions, keep-alive)
+src/derivApi.js     picks the WebSocket URL (public feed, or PAT + OTP login)
+src/derivClient.js  WebSocket client (req_id routing, subscriptions, keep-alive, diagnostics)
 src/config.js       env config and validation
 test/               node:test unit tests (fake Deriv client)
 ```

@@ -25,23 +25,15 @@ test('diagnose reports the handshake status, cf-ray and page text', async () => 
 
 test('connect sends browser-like headers and explains the failure', async () => {
   const { srv, seen, port } = await rejectingServer(403, 'Forbidden: app_id blocked');
-  const client = new DerivClient({ appId: '1', endpoint: `127.0.0.1:${port}`, log: quietLog });
-  client.endpoints = [`127.0.0.1:${port}`];
-  // Plain ws:// for the local server.
-  const connect = client.connect.bind(client);
-  const origOpen = WebSocket;
-  globalThis.WebSocket = class extends origOpen {
-    constructor(url, opts) {
-      super(url.replace('wss://', 'ws://'), opts);
-    }
-  };
+  const client = new DerivClient({ log: quietLog });
   try {
-    await assert.rejects(connect(), (err) => {
+    await assert.rejects(client.connect([`ws://127.0.0.1:${port}/websockets/v3?app_id=1`]), (err) => {
       assert.match(err.message, /Could not reach any Deriv server/);
+      assert.match(err.message, /HTTP 403/);
+      assert.doesNotMatch(err.message, /app_id=1/, 'query strings are redacted');
       return true;
     });
   } finally {
-    globalThis.WebSocket = origOpen;
     srv.close();
   }
   assert.equal(seen[0].origin, 'https://app.deriv.com');

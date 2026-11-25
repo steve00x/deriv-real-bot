@@ -88,3 +88,21 @@ test('live mode buys and records the settled profit', async () => {
   assert.equal(risk.trades, 1);
   assert.equal(risk.profit, -1);
 });
+
+test('paper mode falls back to PAPER_PAYOUT when the feed will not quote', async () => {
+  const { bot, client, risk } = makeBot({ maxTrades: 1, paperPayout: 0.9 });
+  client.request = async (p) => {
+    if (p.proposal) throw new Error('AuthorizationRequired: Please log in.');
+    if (p.ticks_history) return { history: { prices: [1, 2, 3] } };
+    return {};
+  };
+  bot.run();
+  await flush();
+  client.tick(4);
+  await flush();
+  client.tick(5);
+  client.tick(6);
+  client.tick(7);
+  assert.equal(risk.trades, 1);
+  assert.equal(risk.profit, 0.9);
+});

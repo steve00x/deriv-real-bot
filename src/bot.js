@@ -3,6 +3,7 @@
 import { fmt } from './risk.js';
 
 const HISTORY_SIZE = 500;
+const round2 = (x) => Math.round(x * 100) / 100;
 
 /**
  * Rise/Fall rules: Rise (CALL) wins if exit > entry, Fall (PUT) wins if exit < entry.
@@ -15,7 +16,7 @@ export function riseFallOutcome(contractType, entry, exit) {
 }
 
 export class Bot {
-  constructor({ cfg, client, strategy, risk, log }) {
+  constructor({ cfg, client, strategy, risk, log, account = null, needsAuthorize = Boolean(cfg.apiToken) }) {
     this.cfg = cfg;
     this.client = client;
     this.strategy = strategy;
@@ -27,20 +28,26 @@ export class Bot {
     this.paperTrade = null;
     this.currency = cfg.currency;
     this.stopped = false;
+    this.account = account; // set by the new-API login flow
+    this.needsAuthorize = needsAuthorize; // legacy API: log in over the socket
+    this.quoteFailed = false;
   }
 
   /** Runs until a stop condition is hit. Resolves with the stop reason. */
   async run() {
     const { cfg, client, log } = this;
 
-    if (cfg.apiToken) {
+    if (this.needsAuthorize) {
       const { authorize: acct } = await client.request({ authorize: cfg.apiToken });
-      const kind = acct.is_virtual ? 'DEMO' : 'REAL';
-      log.info(`Logged in as ${acct.loginid} (${kind}) balance=${acct.balance} ${acct.currency}`);
-      if (!acct.is_virtual && !cfg.paper && !cfg.allowRealAccount) {
-        throw new Error('Refusing to trade a REAL account. Use a demo token, or set ALLOW_REAL_ACCOUNT=true.');
+      this.account = { id: acct.loginid, isVirtual: Boolean(acct.is_virtual), currency: acct.currency, balance: acct.balance };
+    }
+    if (this.account) {
+      const a = this.account;
+      log.info(`Trading account ${a.id} (${a.isVirtual ? 'DEMO' : 'REAL'})${a.balance != null ? ` balance=${a.balance} ${a.currency ?? ''}` : ''}`);
+      if (!a.isVirtual && !cfg.paper && !cfg.allowRealAccount) {
+        throw new Error('Refusing to trade a REAL account. Use a demo account, or set ALLOW_REAL_ACCOUNT=true.');
       }
-      this.currency = acct.currency || cfg.currency;
+      this.currency = a.currency || cfg.currency;
     }
 
     const { history } = await client.request({
@@ -125,10 +132,20 @@ export class Bot {
     const label = contractType === 'CALL' ? 'RISE' : 'FALL';
 
     if (this.cfg.paper) {
-      // Ask Deriv for a real quote so simulated payouts match the market.
-      const { proposal } = await this.client.request({ proposal: 1, ...params });
-      this.paperTrade = { contractType, stake, payout: Number(proposal.payout), entry: null, ticks: 0 };
-      this.log.info(`[PAPER] ${label} stake=${stake} payout=${proposal.payout}`);
+      // Ask Deriv for a real quote so simulated payouts match the market; the
+      // public feed may not allow quotes, so fall back to PAPER_PAYOUT.
+      let payout = round2(stake * (1 + this.cfg.paperPayout));
+      if (!this.quoteFailed) {
+        try {
+          const { proposal } = await this.client.request({ proposal: 1, ...params }, 10_000);
+          payout = Number(proposal.payout);
+        } catch (err) {
+          this.quoteFailed = true;
+          this.log.warn(`Deriv won't quote on this connection (${err.message}); simulating a ${this.cfg.paperPayout} payout ratio.`);
+        }
+      }
+      this.paperTrade = { contractType, stake, payout, entry: null, ticks: 0 };
+      this.log.info(`[PAPER] ${label} stake=${stake} payout=${payout}`);
       return; // settled tick-by-tick in advancePaperTrade()
     }
 

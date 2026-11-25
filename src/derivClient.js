@@ -11,8 +11,6 @@ export class DerivAPIError extends Error {
   }
 }
 
-const FALLBACK_ENDPOINTS = ['ws.derivws.com', 'ws.binaryws.com'];
-
 const HINTS = {
   ENOTFOUND: 'DNS lookup failed: the name could not be resolved (no internet, or DNS blocks Deriv)',
   EAI_AGAIN: 'DNS lookup failed temporarily (check your internet connection)',
@@ -75,11 +73,11 @@ export function diagnose(url, timeoutMs = 10_000) {
   });
 }
 
+/** Hide query strings (they can hold an OTP or app id) when logging a URL. */
+export const redact = (url) => url.split('?')[0];
+
 export class DerivClient {
-  constructor({ appId, endpoint = 'ws.derivws.com', log = console }) {
-    this.appId = appId;
-    // Try the configured server first, then Deriv's other public endpoints.
-    this.endpoints = [...new Set([endpoint, ...FALLBACK_ENDPOINTS])];
+  constructor({ log = console } = {}) {
     this.url = null;
     this.log = log;
     this.nextId = 1;
@@ -90,20 +88,24 @@ export class DerivClient {
     this.onClose = null;
   }
 
-  /** Connect to the first reachable endpoint; throws with a diagnosis if none work. */
-  async connect() {
+  /**
+   * Connect to the first URL that works (a URL may contain a one-time password,
+   * so it is never logged). Throws with a diagnosis if none work.
+   */
+  async connect(urls) {
     const failures = [];
-    for (const host of this.endpoints) {
-      const url = `wss://${host}/websockets/v3?app_id=${this.appId}`;
+    for (const url of [urls].flat()) {
+      const shown = redact(url);
       try {
         await this.#open(url);
         this.url = url;
-        this.log.info(`Connected to wss://${host}`);
+        this.log.info(`Connected to ${shown}`);
         return;
       } catch (err) {
-        const why = `${err.message}${await diagnose(url)}`;
-        this.log.warn(`Could not connect to ${host}: ${why}`);
-        failures.push(`${host}: ${why}`);
+        // Don't replay a one-time-password URL: the OTP is single use.
+        const why = `${err.message}${url.includes('otp=') ? '' : await diagnose(url)}`;
+        this.log.warn(`Could not connect to ${shown}: ${why}`);
+        failures.push(`${shown}: ${why}`);
       }
     }
     throw new Error(
@@ -131,6 +133,11 @@ export class DerivClient {
       };
       ws.onerror = (e) => {
         errorText = e.error?.cause?.message || e.error?.message || e.message || '';
+        // A rejected handshake fires 'error' but may never fire 'close'.
+        if (!opened) {
+          clearTimeout(timer);
+          reject(new Error(errorText || 'connection failed'));
+        }
       };
       ws.onmessage = (e) => this.#handle(JSON.parse(e.data));
       ws.onclose = (e) => {
