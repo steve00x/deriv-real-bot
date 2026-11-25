@@ -39,6 +39,18 @@ To set up live trading, register an app and create a token (Trade scope) at http
 
 To add your own, write a class with `minHistory` and `decide(prices)` that returns `'CALL'`, `'PUT'` or `null` in `src/strategy.js`, then register it in `buildStrategy`.
 
+## Backtesting
+
+```bash
+npm run backtest                          # last 5000 ticks of SYMBOL
+npm run backtest -- --ticks 30000         # more history (downloaded 5000 at a time)
+npm run backtest -- --symbol 1HZ100V      # another market
+```
+
+This downloads real tick history from the public feed and replays it through every strategy, plus a **random coin-flip baseline**. It uses the same rules as paper trading: entry on the tick after the signal, exit `DURATION` ticks later, `COOLDOWN_TICKS` between trades, stake 1, and a win paying `PAPER_PAYOUT`. Strategy settings come from `.env`.
+
+For each strategy it reports trades, win rate, profit, worst drawdown and longest losing streak, plus a verdict. A strategy only counts as **beating break-even** (about 51.3% at a 0.95 payout) if its win rate is at least 2 standard errors above it. Otherwise a lucky run can't be told apart from a real edge. If a strategy looks good, run it again on a different stretch of data before trusting it.
+
 ## Risk controls
 
 The bot stops when any of these is hit: `TAKE_PROFIT`, `STOP_LOSS`, `MAX_TRADES` or `MAX_CONSECUTIVE_LOSSES`. It also stops if the next stake could push the session past the stop loss. `MARTINGALE` (stake × N after a loss, capped by `MAX_STAKE`) is off by default; it raises risk quickly. Press Ctrl+C to stop cleanly and print a summary. A live contract that is still open settles on Deriv by itself.
@@ -49,6 +61,7 @@ The bot stops when any of these is hit: `TAKE_PROFIT`, `STOP_LOSS`, `MAX_TRADES`
 src/index.js        entry point
 src/bot.js          trading loop, paper and live execution
 src/strategy.js     signal generators
+src/backtest.js     replays tick history through all strategies
 src/risk.js         stake sizing and stop rules
 src/derivApi.js     picks the WebSocket URL (public feed, or PAT + OTP login)
 src/derivClient.js  WebSocket client (req_id routing, subscriptions, keep-alive, diagnostics)

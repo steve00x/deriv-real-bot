@@ -7,6 +7,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/index.js",
+    "backtest": "node --env-file-if-exists=.env src/backtest.js",
     "test": "node --test"
   },
   "license": "MIT"
