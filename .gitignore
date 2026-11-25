@@ -1,3 +1,6 @@
 node_modules/
-.env
 *.log
+# Local settings and backups (may hold your API token) - never commit these.
+.env
+.env.*
+!.env.example
