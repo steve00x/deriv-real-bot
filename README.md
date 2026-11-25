@@ -39,6 +39,12 @@ To set up live trading, register an app and create a token (Trade scope) at http
 
 To add your own, write a class with `minHistory` and `decide(prices)` that returns `'CALL'`, `'PUT'` or `null` in `src/strategy.js`, then register it in `buildStrategy`.
 
+## Going live on a demo account
+
+1. Fill in `DERIV_APP_ID`, `DERIV_API_TOKEN` and your demo `DERIV_ACCOUNT_ID` in `.env`. The demo account ID usually starts with `VRTC` or `DOT`; leave it blank to let the bot pick your demo account.
+2. Run `npm run check`. It logs in, opens the trading connection and asks Deriv for a Rise quote, but **never buys**. Fix anything it reports before going further.
+3. Set `PAPER_TRADING=false` and run `npm start`.
+
 ## Backtesting
 
 ```bash
