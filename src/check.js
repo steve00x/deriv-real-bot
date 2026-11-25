@@ -6,7 +6,7 @@ import { resolveConnection } from './derivApi.js';
 import { Bot } from './bot.js';
 import { RiskManager } from './risk.js';
 import { buildStrategy } from './strategy.js';
-import { CONTRACTS, labelFor } from './contracts.js';
+import { CONTRACTS, labelFor, inferDecimals } from './contracts.js';
 import { explainHigherLower } from './offers.js';
 
 const log = { info: (m) => console.log(`OK    ${m}`), warn: (m) => console.warn(`WARN  ${m}`), error: (m) => console.error(`FAIL  ${m}`) };
@@ -33,10 +33,17 @@ export async function runCheck(env = process.env, { fetchImpl, client = new Deri
     if (balance?.balance) log.info(`Balance: ${balance.balance.balance} ${balance.balance.currency}`);
 
     const type = CONTRACTS[cfg.contract].types[0];
-    const params = bot.contractParams(type, cfg.stake);
+    if (cfg.contract === 'higher_lower') {
+      // Needed for the absolute-barrier fallback.
+      const { history } = await client.request({ ticks_history: cfg.symbol, end: 'latest', count: 10, style: 'ticks' });
+      bot.prices = history.prices.map(Number);
+      bot.decimals = inferDecimals(history.prices);
+    }
     let proposal;
     try {
-      ({ proposal } = await client.request({ proposal: 1, ...params }));
+      const { result, format } = await bot.withBarrierFormats(type, cfg.stake, (p) => client.request({ proposal: 1, ...p }));
+      proposal = result.proposal;
+      if (cfg.contract === 'higher_lower') log.info(`Barrier accepted as: ${format} (set BARRIER_FORMAT=${format} to skip the search)`);
     } catch (err) {
       // Higher/Lower quotes fail when the barrier or duration isn't offered:
       // show what Deriv does offer so the fix is obvious.

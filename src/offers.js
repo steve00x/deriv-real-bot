@@ -81,7 +81,12 @@ export function adviseHigherLower(options, cfg) {
     );
   }
   const suggested = (tick ?? higher[0]).barrier;
-  if (suggested != null) {
+  if (suggested != null && Number(suggested) === Number(cfg.barrier)) {
+    lines.push(
+      `Your BARRIER=${cfg.barrier} matches Deriv's suggestion and DURATION in ticks is offered.`,
+      'If Deriv still says "Invalid barrier", the format is the problem: npm run check now tries the other formats automatically.',
+    );
+  } else if (suggested != null) {
     lines.push(
       `Deriv's suggested barrier for Higher is ${formatBarrier(suggested)} (you have BARRIER=${cfg.barrier}).`,
       `Try BARRIER=${formatBarrier(suggested)} first; Deriv only accepts barriers within a range around the current price.`,
@@ -94,8 +99,10 @@ export function adviseHigherLower(options, cfg) {
 
 export function formatOffers(options) {
   if (!options.length) return '  (no Higher/Lower contracts listed)';
-  const rows = options.map((o) => [o.side, o.expiry, `${o.min} - ${o.max}`, o.barrier != null ? formatBarrier(o.barrier) : '-', o.barrierCategory]);
-  const header = ['side', 'expiry', 'duration', 'suggested barrier', 'category'];
+  // Hide the category column when Deriv doesn't report it (the Options API doesn't).
+  const showCat = options.some((o) => o.barrierCategory !== '?');
+  const rows = options.map((o) => [o.side, o.expiry, `${o.min} - ${o.max}`, o.barrier != null ? formatBarrier(o.barrier) : '-', ...(showCat ? [o.barrierCategory] : [])]);
+  const header = ['side', 'expiry', 'duration', 'suggested barrier', ...(showCat ? ['category'] : [])];
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
   const line = (r) => '  ' + r.map((c, i) => String(c).padEnd(widths[i])).join('  ');
   return [line(header), line(widths.map((w) => '-'.repeat(w))), ...rows.map(line)].join('\n');

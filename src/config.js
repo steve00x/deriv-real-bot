@@ -42,6 +42,8 @@ export function loadConfig(env = process.env) {
     strategy: str('STRATEGY', DEFAULT_STRATEGY[str('CONTRACT', 'rise_fall').toLowerCase()] ?? 'sma_cross'),
     barrier: str('BARRIER', '+0.1'), // Higher/Lower: offset from the entry price
     tradeSide: str('TRADE_SIDE', 'higher').toLowerCase(), // Higher/Lower: higher (only Higher) | lower | both
+    // Higher/Lower: how to send the barrier. auto tries relative, then number, then absolute.
+    barrierFormat: str('BARRIER_FORMAT', 'auto').toLowerCase(),
     digitWindow: num('DIGIT_WINDOW', 3), // same-parity digits in a row before an Even/Odd trade
     fastPeriod: num('FAST_PERIOD', 5),
     slowPeriod: num('SLOW_PERIOD', 20),
@@ -83,6 +85,9 @@ export function validateConfig(cfg) {
     }
     cfg.barrier = /^[+-]/.test(cfg.barrier) ? cfg.barrier : `+${cfg.barrier}`;
     if (!['higher', 'lower', 'both'].includes(cfg.tradeSide)) throw new Error('TRADE_SIDE must be higher, lower or both');
+    if (!['auto', 'relative', 'relative_number', 'absolute'].includes(cfg.barrierFormat)) {
+      throw new Error('BARRIER_FORMAT must be auto, relative, relative_number or absolute');
+    }
     const opposite = { higher: 'always_lower', lower: 'always_higher' }[cfg.tradeSide];
     if (cfg.strategy === opposite) {
       throw new Error(`STRATEGY=${opposite} never trades when TRADE_SIDE=${cfg.tradeSide}`);

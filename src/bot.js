@@ -6,6 +6,18 @@ import { fmt } from './risk.js';
 import { CONTRACTS, labelFor, contractOutcome, formatBarrier, inferDecimals, lastDigit } from './contracts.js';
 
 const HISTORY_SIZE = 500;
+
+/**
+ * Ways to send a Higher/Lower barrier. Deriv documents the relative string
+ * ("+0.07"); if the Options API rejects it, the bot tries the others and
+ * keeps whichever Deriv accepts.
+ */
+export const BARRIER_FORMATS = ['relative', 'relative_number', 'absolute'];
+const BARRIER_FORMAT_NAMES = {
+  relative: 'a relative offset string (e.g. "+0.07")',
+  relative_number: 'a relative offset number (e.g. 0.07)',
+  absolute: 'an absolute price level (current price + offset)',
+};
 const round2 = (x) => Math.round(x * 100) / 100;
 
 /**
@@ -53,6 +65,9 @@ export class Bot extends EventEmitter {
     this.needsAuthorize = needsAuthorize; // legacy API: log in over the socket
     this.quoteFailed = false;
     this.decimals = 2; // decimal places the market quotes in (for Even/Odd digits)
+    const fmt = cfg.barrierFormat ?? 'auto';
+    this.barrierFormat = fmt === 'auto' ? BARRIER_FORMATS[0] : fmt;
+    this.barrierFormatLocked = fmt !== 'auto';
   }
 
   /** Runs until a stop condition is hit. Resolves with the stop reason. */
@@ -150,9 +165,22 @@ export class Bot extends EventEmitter {
     return this.cfg.contract === 'higher_lower' ? Number(this.cfg.barrier) : 0;
   }
 
-  contractParams(contractType, stake) {
+  /** The barrier value to send, in the given format. */
+  barrierValue(format = this.barrierFormat) {
+    const offset = Number(this.cfg.barrier);
+    if (format === 'relative_number') return offset;
+    if (format === 'absolute') {
+      const last = this.prices.at(-1);
+      if (last == null) throw new Error('No price yet to compute an absolute barrier');
+      const own = (String(this.cfg.barrier).split('.')[1] ?? '').length;
+      return (last + offset).toFixed(Math.max(this.decimals, own));
+    }
+    return formatBarrier(this.cfg.barrier, this.decimals);
+  }
+
+  contractParams(contractType, stake, format = this.barrierFormat) {
     const { cfg } = this;
-    const barrier = cfg.contract === 'higher_lower' ? { barrier: formatBarrier(cfg.barrier, this.decimals) } : {};
+    const barrier = cfg.contract === 'higher_lower' ? { barrier: this.barrierValue(format) } : {};
     return {
       ...barrier,
       amount: stake,
@@ -166,31 +194,70 @@ export class Bot extends EventEmitter {
     };
   }
 
+  /**
+   * Send a proposal/buy built by `send(params)`. For Higher/Lower, if Deriv
+   * says the barrier is invalid, retry with the other barrier formats (a
+   * rejected buy is not executed, so retrying is safe) and keep the one that works.
+   * Resolves with { result, params, format }.
+   */
+  async withBarrierFormats(contractType, stake, send) {
+    if (this.cfg.contract !== 'higher_lower' || this.barrierFormatLocked) {
+      const params = this.contractParams(contractType, stake);
+      return { result: await send(params), params, format: this.barrierFormat };
+    }
+    const order = [this.barrierFormat, ...BARRIER_FORMATS.filter((f) => f !== this.barrierFormat)];
+    const errors = [];
+    for (const format of order) {
+      let params;
+      try {
+        params = this.contractParams(contractType, stake, format);
+        const result = await send(params);
+        if (format !== BARRIER_FORMATS[0]) {
+          this.log.info(`Deriv accepted the barrier as ${BARRIER_FORMAT_NAMES[format]}; using that from now on.`);
+        }
+        this.barrierFormat = format;
+        this.barrierFormatLocked = true;
+        return { result, params, format };
+      } catch (err) {
+        if (!/barrier/i.test(err.message)) throw err;
+        errors.push(`${format} (${JSON.stringify(params?.barrier)}): ${err.message}`);
+      }
+    }
+    throw new Error(`Deriv rejected the barrier in every format:\n  ${errors.join('\n  ')}`);
+  }
+
   async placeTrade(contractType) {
     const stake = this.risk.nextStake();
-    const params = this.contractParams(contractType, stake);
     const label = labelFor(this.cfg.contract, contractType);
 
     if (this.cfg.paper) {
       // Ask Deriv for a real quote so simulated payouts match the market; the
       // public feed may not allow quotes, so fall back to PAPER_PAYOUT.
       let payout = round2(stake * (1 + this.cfg.paperPayout));
+      let absBarrier = null;
       if (!this.quoteFailed) {
         try {
-          const { proposal } = await this.client.request({ proposal: 1, ...params }, 10_000);
-          payout = Number(proposal.payout);
+          const { result, params, format } = await this.withBarrierFormats(contractType, stake, (p) =>
+            this.client.request({ proposal: 1, ...p }, 10_000),
+          );
+          payout = Number(result.proposal.payout);
+          if (format === 'absolute') absBarrier = Number(params.barrier);
         } catch (err) {
+          // Higher/Lower payouts depend on the barrier, so a made-up payout would mislead.
+          if (this.cfg.contract === 'higher_lower') throw err;
           this.quoteFailed = true;
           this.log.warn(`Deriv won't quote on this connection (${err.message}); simulating a ${this.cfg.paperPayout} payout ratio.`);
         }
       }
-      this.paperTrade = { contractType, stake, payout, entry: null, ticks: 0 };
+      this.paperTrade = { contractType, stake, payout, entry: null, ticks: 0, absBarrier };
       this.log.info(`[PAPER] ${label} stake=${stake} payout=${payout}`);
       this.emit('trade-open', { label, stake, payout, time: Date.now() });
       return; // settled tick-by-tick in advancePaperTrade()
     }
 
-    const { buy } = await this.client.request({ buy: 1, price: stake, parameters: params });
+    const {
+      result: { buy },
+    } = await this.withBarrierFormats(contractType, stake, (p) => this.client.request({ buy: 1, price: stake, parameters: p }));
     this.log.info(`[LIVE] ${label} contract=${buy.contract_id} cost=${buy.buy_price} payout=${buy.payout}`);
     this.emit('trade-open', { label, stake: Number(buy.buy_price), payout: Number(buy.payout), contractId: buy.contract_id, time: Date.now() });
     const result = await this.waitForSettlement(buy.contract_id);
@@ -225,7 +292,11 @@ export class Bot extends EventEmitter {
     t.ticks += 1;
     if (t.ticks < this.cfg.duration) return;
 
-    const outcome = contractOutcome(t.contractType, t.entry, price, this.decimals, this.barrierOffset());
+    // An absolute barrier was fixed at purchase; a relative one moves with the entry.
+    const outcome =
+      t.absBarrier != null
+        ? contractOutcome(t.contractType, t.absBarrier, price, this.decimals, 0)
+        : contractOutcome(t.contractType, t.entry, price, this.decimals, this.barrierOffset());
     const profit = outcome === 'won' ? t.payout - t.stake : -t.stake;
     this.paperTrade = null;
     this.settle(labelFor(this.cfg.contract, t.contractType), profit, t.entry, price);

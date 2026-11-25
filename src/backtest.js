@@ -203,14 +203,16 @@ export function describeData(prices, times) {
  * Ask Deriv what each side currently pays (profit per 1 staked), so the
  * backtest uses real payouts. Falls back to PAPER_PAYOUT if quotes fail.
  */
-export async function quotePayouts(client, cfg, log) {
+export async function quotePayouts(client, cfg, log, prices = []) {
   const { Bot } = await import('./bot.js');
   const bot = new Bot({ cfg, client, strategy: null, risk: null, log });
+  bot.prices = prices.slice(-10);
+  if (prices.length) bot.decimals = inferDecimals(prices.slice(-200));
   const out = {};
   for (const type of CONTRACTS[cfg.contract].types) {
     try {
-      const { proposal } = await client.request({ proposal: 1, ...bot.contractParams(type, 1) }, 10_000);
-      out[type] = Number(proposal.payout) - 1;
+      const { result } = await bot.withBarrierFormats(type, 1, (p) => client.request({ proposal: 1, ...p }, 10_000));
+      out[type] = Number(result.proposal.payout) - 1;
     } catch (err) {
       if (cfg.contract === 'higher_lower') {
         throw new Error(
@@ -259,7 +261,7 @@ export async function main(argv = process.argv.slice(2)) {
   let payout = cfg.paperPayout;
   try {
     data = await fetchHistory(client, symbol, ticks, log);
-    payout = await quotePayouts(client, { ...cfg, symbol }, log);
+    payout = await quotePayouts(client, { ...cfg, symbol }, log, data.prices);
   } finally {
     client.close();
   }
