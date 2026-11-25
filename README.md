@@ -31,6 +31,18 @@ Deriv replaced the old `wss://ws.derivws.com/websockets/v3?app_id=1089` endpoint
 
 To set up live trading, register an app and create a token (Trade scope) at https://developers.deriv.com, then put both in `.env`. Keep `.env` private; it is git-ignored. `DERIV_API=legacy` switches back to the old endpoint if you need it.
 
+## Dashboard
+
+While the bot runs, open **http://localhost:3000** in your browser. It updates live and shows:
+
+- session profit, with progress toward your stop loss and take profit
+- win rate against break-even, trade count, losing streak and next stake
+- charts of profit over the session, the live price, and how often each last digit appears
+- the open trade, every settled trade and the recent log
+- a **Stop bot** button
+
+The dashboard is only reachable from your own computer. When the bot stops, the page stays up so you can review the session; press Ctrl+C to close it. If you run two bots, the second one's dashboard is on port 3001. Set `DASHBOARD_PORT=0` to turn it off.
+
 ## Contracts (`CONTRACT=`)
 
 - `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
@@ -84,6 +96,7 @@ The bot stops when any of these is hit: `TAKE_PROFIT`, `STOP_LOSS`, `MAX_TRADES`
 
 ```
 src/index.js        entry point
+src/dashboard.js    local web dashboard server (dashboard.html is the page)
 src/bot.js          trading loop, paper and live execution
 src/contracts.js    contract types and how each one is settled
 src/strategy.js     signal generators

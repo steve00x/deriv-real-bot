@@ -1,6 +1,7 @@
 // Trading engine: watches ticks, asks the strategy for a signal, sizes the
 // stake with the risk manager, and places (or simulates) the trade.
 // Supports Rise/Fall and Even/Odd contracts (see contracts.js).
+import { EventEmitter } from 'node:events';
 import { fmt } from './risk.js';
 import { CONTRACTS, LABELS, contractOutcome, inferDecimals, lastDigit } from './contracts.js';
 
@@ -25,8 +26,18 @@ export function decimalsFromPipSize(pip) {
   return null;
 }
 
-export class Bot {
+/**
+ * Events (used by the dashboard):
+ *   ready        { prices, decimals }       history loaded, trading starts
+ *   price        { price, time }            every tick
+ *   trade-open   { label, stake, payout, time, contractId? }
+ *   trade-close  { label, profit, won, entry, exit, digit, time }
+ *   trade-error  { message, time }
+ *   stopped      { reason, time }
+ */
+export class Bot extends EventEmitter {
   constructor({ cfg, client, strategy, risk, log, account = null, needsAuthorize = Boolean(cfg.apiToken) }) {
+    super();
     this.cfg = cfg;
     this.client = client;
     this.strategy = strategy;
@@ -70,6 +81,7 @@ export class Bot {
     this.prices = history.prices.map(Number);
     this.decimals = decimalsFromPipSize(history.pip_size) ?? inferDecimals(history.prices);
     log.info(`Loaded ${this.prices.length} ticks of ${cfg.symbol} history (${this.decimals} decimals)`);
+    this.emit('ready', { prices: [...this.prices], decimals: this.decimals });
     log.info(
       `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} contract=${CONTRACTS[cfg.contract ?? 'rise_fall'].name} strategy=${this.strategy.name} ` +
         `duration=${cfg.duration}${cfg.durationUnit} stake=${cfg.stake} ${this.currency}`,
@@ -96,6 +108,7 @@ export class Bot {
     }
     this.log.info(`Stopping: ${reason}`);
     this.log.info(`Session: ${this.risk.summary()}`);
+    this.emit('stopped', { reason, time: Date.now() });
     this.resolveRun?.(reason);
   }
 
@@ -103,6 +116,7 @@ export class Bot {
     if (this.stopped) return;
     this.prices.push(price);
     if (this.prices.length > HISTORY_SIZE) this.prices.shift();
+    this.emit('price', { price, time: Date.now() });
 
     if (this.paperTrade) this.advancePaperTrade(price);
     if (this.busy) return;
@@ -120,6 +134,7 @@ export class Bot {
     this.busy = true;
     this.placeTrade(signal).catch((err) => {
       this.log.error(`Trade failed: ${err.message}`);
+      this.emit('trade-error', { message: err.message, time: Date.now() });
       this.paperTrade = null;
       this.busy = false;
       this.cooldown = this.cfg.cooldownTicks;
@@ -160,11 +175,13 @@ export class Bot {
       }
       this.paperTrade = { contractType, stake, payout, entry: null, ticks: 0 };
       this.log.info(`[PAPER] ${label} stake=${stake} payout=${payout}`);
+      this.emit('trade-open', { label, stake, payout, time: Date.now() });
       return; // settled tick-by-tick in advancePaperTrade()
     }
 
     const { buy } = await this.client.request({ buy: 1, price: stake, parameters: params });
     this.log.info(`[LIVE] ${label} contract=${buy.contract_id} cost=${buy.buy_price} payout=${buy.payout}`);
+    this.emit('trade-open', { label, stake: Number(buy.buy_price), payout: Number(buy.payout), contractId: buy.contract_id, time: Date.now() });
     const result = await this.waitForSettlement(buy.contract_id);
     this.settle(label, Number(result.profit), result.entry_spot, result.exit_spot);
   }
@@ -206,10 +223,20 @@ export class Bot {
   settle(label, profit, entry, exit) {
     this.risk.record(profit);
     const tag = this.cfg.paper ? '[PAPER]' : '[LIVE]';
-    const digit = this.cfg.contract === 'even_odd' && exit != null ? ` last digit=${lastDigit(exit, this.decimals)}` : '';
+    const exitDigit = exit != null ? lastDigit(exit, this.decimals) : null;
+    const digit = this.cfg.contract === 'even_odd' && exitDigit != null ? ` last digit=${exitDigit}` : '';
     this.log.info(
       `${tag} ${label} ${profit > 0 ? 'WON ' : 'LOST'} ${fmt(profit)} (entry=${entry} exit=${exit}${digit}) | ${this.risk.summary()}`,
     );
+    this.emit('trade-close', {
+      label,
+      profit,
+      won: profit > 0,
+      entry: entry != null ? Number(entry) : null,
+      exit: exit != null ? Number(exit) : null,
+      digit: exitDigit,
+      time: Date.now(),
+    });
     this.busy = false;
     this.cooldown = this.cfg.cooldownTicks;
   }

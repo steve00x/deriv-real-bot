@@ -46,6 +46,9 @@ export function loadConfig(env = process.env) {
     rsiHigh: num('RSI_HIGH', 70),
     cooldownTicks: num('COOLDOWN_TICKS', 3), // ticks to wait after a trade closes
 
+    // Dashboard: http://localhost:<port> while the bot runs; 0 turns it off
+    dashboardPort: num('DASHBOARD_PORT', 3000),
+
     // Risk management
     stake: num('STAKE', 1),
     maxStake: num('MAX_STAKE', 10),

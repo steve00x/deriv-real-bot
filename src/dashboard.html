@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deriv Bot Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f4f4f2;
+    --surface-1: #ffffff;
+    --surface-2: #f7f7f5;
+    --border: #e3e3df;
+    --text-primary: #191919;
+    --text-secondary: #666666;
+    --grid: #ececea;
+    --axis: #c9c9c5;
+    --series-1: #257de0;
+    --series-2: #f47230;
+    --good: #0aac23;
+    --good-text: #006c10;
+    --critical: #dc3c3d;
+    --critical-text: #b3261e;
+    --warning: #fbb315;
+    --accent: #257de0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0f0f0f;
+      --surface-1: #191919;
+      --surface-2: #202020;
+      --border: #2e2e2e;
+      --text-primary: #efefef;
+      --text-secondary: #9c9c9c;
+      --grid: #262626;
+      --axis: #444444;
+      --series-1: #338ced;
+      --series-2: #e76624;
+      --good-text: #4cd264;
+      --critical-text: #ff8a80;
+      --accent: #338ced;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0f0f0f;
+    --surface-1: #191919;
+    --surface-2: #202020;
+    --border: #2e2e2e;
+    --text-primary: #efefef;
+    --text-secondary: #9c9c9c;
+    --grid: #262626;
+    --axis: #444444;
+    --series-1: #338ced;
+    --series-2: #e76624;
+    --good-text: #4cd264;
+    --critical-text: #ff8a80;
+    --accent: #338ced;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 13px; }
+  .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--surface-1); border: 1px solid var(--border);
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); }
+  .pill.running .dot { background: var(--good); }
+  .pill.stopped .dot { background: var(--critical); border-radius: 2px; }
+  .pill.offline .dot { background: var(--warning); }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); }
+  .badge.real { border-color: var(--critical); color: var(--critical-text); }
+  button {
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary);
+  }
+  button:hover { background: var(--surface-2); }
+  button.danger { border-color: var(--critical); color: var(--critical-text); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .grid { display: grid; gap: 12px; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 12px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .tile .label { color: var(--text-secondary); font-size: 12px; margin-bottom: 4px; }
+  .tile .value { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .tile .note { color: var(--text-secondary); font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile.hero .value { font-size: 32px; white-space: nowrap; }
+  @media (max-width: 520px) { .tile.hero { grid-column: 1 / -1; } }
+  .icon-up { color: var(--good); }
+  .icon-down { color: var(--critical); }
+  .meter { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 8px; overflow: hidden; display: flex; }
+  .meter span { display: block; height: 100%; border-radius: 3px; }
+
+  .charts { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-bottom: 12px; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
+  .card .desc { color: var(--text-secondary); font-size: 12px; margin-bottom: 8px; }
+  .chart { position: relative; height: 220px; }
+  .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .chart .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-secondary); font-size: 13px; }
+  .tick { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 2; white-space: nowrap;
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+    font-variant-numeric: tabular-nums; display: none;
+  }
+  .tip b { font-weight: 650; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-primary); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .lower { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  @media (max-width: 860px) { .lower { grid-template-columns: minmax(0, 1fr); } }
+  .table-wrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface-1); }
+  td.num, th.num { text-align: right; }
+  .res-won { color: var(--good-text); font-weight: 600; }
+  .res-lost { color: var(--critical-text); font-weight: 600; }
+  .open-trade { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+  .open-trade .big { font-size: 20px; font-weight: 650; }
+  .logs { font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; max-height: 300px; overflow-y: auto; color: var(--text-secondary); }
+  .logs div { white-space: pre-wrap; word-break: break-word; }
+  .logs .warn { color: var(--text-primary); }
+  .logs .error { color: var(--critical-text); }
+  .stack { display: grid; gap: 12px; align-content: start; }
+  .muted { color: var(--text-secondary); }
+  .banner { display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--critical); background: var(--surface-1); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Deriv Bot</h1>
+      <div class="sub" id="subtitle">Connecting…</div>
+    </div>
+    <span class="pill" id="status"><span class="dot"></span><span id="status-text">Connecting</span></span>
+    <span class="badge" id="mode">-</span>
+    <div class="spacer"></div>
+    <button id="theme" type="button" title="Switch light/dark theme">Theme: auto</button>
+    <button id="stop" type="button" class="danger">Stop bot</button>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <section class="grid tiles" aria-label="Session summary">
+    <div class="card tile hero">
+      <div class="label">Session profit</div>
+      <div class="value" id="t-profit">-</div>
+      <div class="note" id="t-profit-note">-</div>
+      <div class="meter" id="t-limits" title="Progress toward stop loss (left) and take profit (right)"></div>
+    </div>
+    <div class="card tile">
+      <div class="label">Win rate</div>
+      <div class="value" id="t-winrate">-</div>
+      <div class="note" id="t-winrate-note">-</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Trades</div>
+      <div class="value" id="t-trades">-</div>
+      <div class="note" id="t-trades-note">-</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Losses in a row</div>
+      <div class="value" id="t-streak">-</div>
+      <div class="note" id="t-streak-note">-</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Next stake</div>
+      <div class="value" id="t-stake">-</div>
+      <div class="note" id="t-stake-note">-</div>
+    </div>
+  </section>
+
+  <section class="grid charts">
+    <div class="card">
+      <h2>Profit over the session</h2>
+      <div class="desc">Running total after each settled trade</div>
+      <div class="chart" id="c-equity"></div>
+    </div>
+    <div class="card">
+      <h2 id="price-title">Live price</h2>
+      <div class="desc">Last 300 ticks</div>
+      <div class="chart" id="c-price"></div>
+    </div>
+    <div class="card">
+      <h2>Last digits</h2>
+      <div class="desc" id="digits-desc">How often each last digit appeared</div>
+      <div class="legend" id="digits-legend"></div>
+      <div class="chart" id="c-digits" style="height: 196px"></div>
+    </div>
+  </section>
+
+  <section class="grid lower">
+    <div class="card">
+      <h2>Trades</h2>
+      <div class="desc">Newest first</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Time</th><th>Side</th><th>Result</th><th class="num">Profit</th><th class="num">Total</th><th class="num">Entry</th><th class="num">Exit</th></tr></thead>
+          <tbody id="trades"><tr><td colspan="8" class="muted">No trades yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <h2>Open trade</h2>
+        <div id="open" class="muted">None</div>
+      </div>
+      <div class="card">
+        <h2>Log</h2>
+        <div class="logs" id="logs"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  let S = null;
+  let online = false;
+
+  // ---------- helpers ----------
+  const money = (x) => (x == null ? '-' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(2));
+  const fixed = (x, d) => (x == null ? '-' : Number(x).toFixed(d));
+  const pct = (x, d = 1) => (x == null ? '-' : (x * 100).toFixed(d) + '%');
+  const time = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const el = (name, attrs = {}, parent) => {
+    const n = document.createElementNS(SVGNS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  function niceTicks(min, max, count = 4) {
+    if (min === max) { min -= 1; max += 1; }
+    const span = max - min;
+    const step0 = span / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+    const lo = Math.floor(min / step) * step;
+    const hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(10));
+    return { lo, hi, ticks, step };
+  }
+  const decimalsOf = (step) => Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+
+  function tooltip(container) {
+    let t = container.querySelector('.tip');
+    if (!t) { t = document.createElement('div'); t.className = 'tip'; container.appendChild(t); }
+    return {
+      show(html, x, y) {
+        t.innerHTML = html;
+        t.style.display = 'block';
+        const w = t.offsetWidth, h = t.offsetHeight, cw = container.clientWidth;
+        let left = x + 12; if (left + w > cw) left = x - w - 12; if (left < 0) left = 0;
+        let top = y - h - 10; if (top < 0) top = y + 14;
+        t.style.left = left + 'px'; t.style.top = top + 'px';
+      },
+      hide() { t.style.display = 'none'; },
+    };
+  }
+
+  function empty(container, text) {
+    container.innerHTML = `<div class="empty">${text}</div>`;
+  }
+
+  // ---------- line chart (single series, crosshair tooltip) ----------
+  function lineChart(container, pts, { yFmt, xLabel, tip, zero = false, color = 'var(--series-1)', xTicks }) {
+    if (pts.length < 2) return false;
+    const W = container.clientWidth, H = container.clientHeight;
+    const m = { l: 52, r: 10, t: 10, b: 24 };
+    const ys = pts.map((p) => p.y);
+    let ymin = Math.min(...ys), ymax = Math.max(...ys);
+    if (zero) { ymin = Math.min(0, ymin); ymax = Math.max(0, ymax); }
+    const { lo, hi, ticks, step } = niceTicks(ymin, ymax, 4);
+    const x0 = pts[0].x, x1 = pts.at(-1).x;
+    const X = (x) => m.l + ((x - x0) / (x1 - x0 || 1)) * (W - m.l - m.r);
+    const Y = (y) => m.t + (1 - (y - lo) / (hi - lo || 1)) * (H - m.t - m.b);
+
+    container.innerHTML = '';
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' }, container);
+    const yd = decimalsOf(step);
+    for (const v of ticks) {
+      el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 && zero ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }, svg);
+      const t = el('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg);
+      t.textContent = yFmt ? yFmt(v, yd) : v.toFixed(yd);
+    }
+    for (const xt of xTicks(x0, x1)) {
+      const t = el('text', { x: X(xt.x), y: H - 6, 'text-anchor': xt.anchor || 'middle', class: 'tick' }, svg);
+      t.textContent = xt.label;
+    }
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join('');
+    el('path', { d, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    const last = pts.at(-1);
+    el('circle', { cx: X(last.x), cy: Y(last.y), r: 4, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2 }, svg);
+
+    const cross = el('line', { y1: m.t, y2: H - m.b, stroke: 'var(--axis)', 'stroke-width': 1, visibility: 'hidden' }, svg);
+    const dot = el('circle', { r: 5, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2, visibility: 'hidden' }, svg);
+    const tt = tooltip(container);
+    const hit = el('rect', { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: 'transparent' }, svg);
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect();
+      const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      let best = 0, bd = Infinity;
+      pts.forEach((p, i) => { const dd = Math.abs(X(p.x) - px); if (dd < bd) { bd = dd; best = i; } });
+      const p = pts[best];
+      cross.setAttribute('x1', X(p.x)); cross.setAttribute('x2', X(p.x)); cross.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', X(p.x)); dot.setAttribute('cy', Y(p.y)); dot.setAttribute('visibility', 'visible');
+      tt.show(tip(p), X(p.x), Y(p.y));
+    };
+    const leave = () => { cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tt.hide(); };
+    hit.addEventListener('mousemove', move);
+    hit.addEventListener('touchstart', move, { passive: true });
+    hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('mouseleave', leave);
+    hit.addEventListener('touchend', leave);
+    svg.setAttribute('aria-label', xLabel);
+    return true;
+  }
+
+  // ---------- digits bar chart ----------
+  function digitsChart(container, counts, sample) {
+    if (!sample) return false;
+    const W = container.clientWidth, H = container.clientHeight;
+    const m = { l: 36, r: 6, t: 8, b: 22 };
+    const share = counts.map((c) => c / sample);
+    const { hi, ticks } = niceTicks(0, Math.max(0.12, ...share), 3);
+    const Y = (v) => m.t + (1 - v / hi) * (H - m.t - m.b);
+    const band = (W - m.l - m.r) / 10;
+    const bw = Math.max(6, band - 2); // 2px surface gap between bars
+
+    container.innerHTML = '';
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Share of ticks ending in each digit' }, container);
+    for (const v of ticks) {
+      el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }, svg);
+      const t = el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg);
+      t.textContent = Math.round(v * 100) + '%';
+    }
+    const tt = tooltip(container);
+    share.forEach((s, d) => {
+      const x = m.l + d * band + (band - bw) / 2;
+      const y = Y(s), base = Y(0), h = Math.max(0, base - y);
+      const r = Math.min(4, h, bw / 2);
+      const color = d % 2 === 0 ? 'var(--series-1)' : 'var(--series-2)';
+      // Rounded top corners, square at the baseline.
+      const path = `M${x},${base} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${base} Z`;
+      el('path', { d: path, fill: color }, svg);
+      const lbl = el('text', { x: x + bw / 2, y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg);
+      lbl.textContent = d;
+      const hit = el('rect', { x: m.l + d * band, y: m.t, width: band, height: H - m.t - m.b + 16, fill: 'transparent' }, svg);
+      const show = () => tt.show(`<b>Digit ${d}</b> (${d % 2 ? 'odd' : 'even'})<br>${counts[d]} of ${sample} ticks · ${pct(s)}`, x + bw / 2, y);
+      hit.addEventListener('mouseenter', show);
+      hit.addEventListener('touchstart', show, { passive: true });
+      hit.addEventListener('mouseleave', () => tt.hide());
+    });
+    // Expected share for a fair digit: 10%.
+    el('line', { x1: m.l, x2: W - m.r, y1: Y(0.1), y2: Y(0.1), stroke: 'var(--text-secondary)', 'stroke-width': 1, 'stroke-dasharray': '4 4' }, svg);
+    return true;
+  }
+
+  // ---------- render ----------
+  function render() {
+    if (!S) return;
+    const c = S.config, r = S.risk, cur = S.account?.currency || '';
+
+    // header
+    $('subtitle').textContent = `${c.contractName} · ${c.strategy} · ${c.symbol} · ${c.duration} · stake ${c.stake}` +
+      (S.account ? ` · ${S.account.id}` : '');
+    const st = $('status');
+    const state = !online ? 'offline' : S.status;
+    st.className = 'pill ' + state;
+    $('status-text').textContent = !online ? 'Disconnected' : S.status === 'running' ? 'Running' : S.status === 'stopped' ? 'Stopped' : 'Starting';
+    const mode = $('mode');
+    const real = S.account && !S.account.isVirtual && c.mode === 'LIVE';
+    mode.textContent = c.mode === 'PAPER' ? 'PAPER' : real ? 'LIVE · REAL MONEY' : 'LIVE · DEMO';
+    mode.className = 'badge' + (real ? ' real' : '');
+    $('stop').disabled = !online || S.status !== 'running';
+    const banner = $('banner');
+    if (S.status === 'stopped') {
+      banner.style.display = 'block';
+      banner.textContent = `Bot stopped: ${S.stopReason}. Press Ctrl+C in the PowerShell window to close it.`;
+    } else if (!online) {
+      banner.style.display = 'block';
+      banner.textContent = 'Lost connection to the bot. It may have been closed; this page reconnects automatically.';
+    } else banner.style.display = 'none';
+
+    // tiles
+    const up = r.profit > 0, down = r.profit < 0;
+    $('t-profit').innerHTML = `<span class="${up ? 'icon-up' : down ? 'icon-down' : ''}" aria-hidden="true">${up ? '▲' : down ? '▼' : ''}</span> ${money(r.profit)} <span class="muted" style="font-size:14px">${cur}</span>`;
+    $('t-profit-note').textContent = `Stop loss −${c.stopLoss} · Take profit +${c.takeProfit}`;
+    const lossFrac = Math.min(1, Math.max(0, -r.profit / c.stopLoss));
+    const gainFrac = Math.min(1, Math.max(0, r.profit / c.takeProfit));
+    $('t-limits').innerHTML =
+      `<span style="width:50%;display:flex;justify-content:flex-end"><span style="width:${lossFrac * 100}%;background:var(--critical)"></span></span>` +
+      `<span style="width:50%"><span style="width:${gainFrac * 100}%;background:var(--good)"></span></span>`;
+    $('t-winrate').textContent = r.winRate == null ? '-' : pct(r.winRate);
+    $('t-winrate-note').textContent = `Break-even ${pct(c.breakEven)}`;
+    $('t-trades').textContent = `${r.trades}`;
+    $('t-trades-note').textContent = `${r.wins} won · ${r.losses} lost · max ${c.maxTrades}`;
+    $('t-streak').textContent = `${r.consecutiveLosses}`;
+    $('t-streak-note').textContent = `Stops at ${c.maxConsecutiveLosses}`;
+    $('t-stake').textContent = r.nextStake.toFixed(2);
+    $('t-stake-note').textContent = r.nextStake > c.stake ? `Base stake ${c.stake} (martingale)` : `Fixed stake ${cur}`;
+
+    // equity
+    const eq = [{ x: 0, y: 0, start: true }, ...S.trades.map((t) => ({ x: t.n, y: t.cumulative, t }))];
+    if (!lineChart($('c-equity'), eq, {
+      zero: true,
+      xLabel: 'Session profit after each trade',
+      yFmt: (v, d) => money(v).replace('.00', '').replace(/(\.\d*?)0+$/, '$1'),
+      xTicks: (a, b) => [{ x: a, label: 'start', anchor: 'start' }, { x: b, label: `trade ${b}`, anchor: 'end' }],
+      tip: (p) => p.start ? '<b>Start</b><br>0.00' :
+        `<b>Trade ${p.t.n}</b> · ${p.t.label} · ${p.t.won ? 'won' : 'lost'} ${money(p.t.profit)}<br>Total ${money(p.y)} · ${time(p.t.time)}`,
+    })) empty($('c-equity'), 'Appears after the first settled trade');
+
+    // price
+    const dec = S.price.decimals;
+    $('price-title').textContent = `Live price · ${c.symbol}` + (S.price.last != null ? ` · ${S.price.last.toFixed(dec)}` : '');
+    const pp = S.price.series.map(([t, p]) => ({ x: t, y: p }));
+    if (!lineChart($('c-price'), pp, {
+      xLabel: `${c.symbol} price, last ${pp.length} ticks`,
+      yFmt: (v, d) => v.toFixed(Math.max(d, 0)),
+      xTicks: (a, b) => [{ x: a, label: time(a), anchor: 'start' }, { x: b, label: time(b), anchor: 'end' }],
+      tip: (p) => `<b>${p.y.toFixed(dec)}</b><br>${time(p.x)} · last digit ${Math.round(Math.abs(p.y) * 10 ** dec) % 10}`,
+    })) empty($('c-price'), 'Waiting for prices…');
+
+    // digits
+    const dg = S.digits;
+    $('digits-desc').textContent = `Last digit of the most recent ${dg.sample} ticks`;
+    $('digits-legend').innerHTML = dg.sample
+      ? `<span><i style="background:var(--series-1)"></i>Even ${pct(dg.even / dg.sample)}</span><span><i style="background:var(--series-2)"></i>Odd ${pct(dg.odd / dg.sample)}</span>` +
+        `<span class="muted"><svg width="18" height="10" aria-hidden="true" style="vertical-align:-1px;margin-right:6px"><line x1="0" x2="18" y1="5" y2="5" stroke="currentColor" stroke-dasharray="4 3"/></svg>fair 10% each</span>`
+      : '';
+    if (!digitsChart($('c-digits'), dg.counts, dg.sample)) empty($('c-digits'), 'Waiting for prices…');
+
+    // open trade
+    const o = S.open;
+    $('open').className = o ? 'open-trade' : 'muted';
+    $('open').innerHTML = o
+      ? `<span class="big">${o.label}</span><span>stake ${o.stake}</span><span>pays ${o.payout}</span><span class="muted">opened ${time(o.time)}${o.contractId ? ' · #' + o.contractId : ''}</span>`
+      : 'None';
+
+    // trades table
+    const rows = S.trades.slice(-200).reverse();
+    $('trades').innerHTML = rows.length
+      ? rows.map((t) => `<tr><td>${t.n}</td><td>${time(t.time)}</td><td>${t.label}</td>` +
+          `<td class="${t.won ? 'res-won' : 'res-lost'}">${t.won ? '✓ Won' : '✕ Lost'}</td>` +
+          `<td class="num">${money(t.profit)}</td><td class="num">${money(t.cumulative)}</td>` +
+          `<td class="num">${fixed(t.entry, dec)}</td><td class="num">${fixed(t.exit, dec)}${t.digit != null && c.contract === 'even_odd' ? ` <span class="muted">(${t.digit})</span>` : ''}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="muted">No trades yet</td></tr>';
+
+    // logs
+    const logs = $('logs');
+    const atBottom = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 4;
+    logs.replaceChildren(...S.logs.map((l) => {
+      const d = document.createElement('div');
+      d.className = l.level;
+      d.textContent = `${time(l.time)}  ${l.message}`;
+      return d;
+    }));
+    if (atBottom) logs.scrollTop = logs.scrollHeight;
+  }
+
+  // ---------- live connection ----------
+  function connect() {
+    const es = new EventSource('/api/events');
+    es.onopen = () => { online = true; render(); };
+    es.onmessage = (e) => { online = true; S = JSON.parse(e.data); render(); };
+    es.onerror = () => { online = false; render(); };
+  }
+
+  $('stop').addEventListener('click', async () => {
+    if (!confirm('Stop the bot? An open contract will still settle on Deriv.')) return;
+    $('stop').disabled = true;
+    try { await fetch('/api/stop', { method: 'POST', headers: { 'X-Dashboard': '1' } }); } catch {}
+  });
+
+  // Theme toggle: auto -> light -> dark (remembered on this browser if allowed).
+  const themes = ['auto', 'light', 'dark'];
+  let theme = 'auto';
+  try { theme = localStorage.getItem('dashboard-theme') || 'auto'; } catch {}
+  const applyTheme = () => {
+    if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', theme);
+    $('theme').textContent = 'Theme: ' + theme;
+    render();
+  };
+  $('theme').addEventListener('click', () => {
+    theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+    try { localStorage.setItem('dashboard-theme', theme); } catch {}
+    applyTheme();
+  });
+  applyTheme();
+
+  let resizeTimer;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 120); });
+  connect();
+})();
+</script>
+</body>
+</html>
