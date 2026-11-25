@@ -122,7 +122,8 @@ export class Bot {
       currency: this.currency,
       duration: cfg.duration,
       duration_unit: cfg.durationUnit,
-      symbol: cfg.symbol,
+      // The Options API renamed the legacy `symbol` field to `underlying_symbol`.
+      [cfg.api === 'legacy' ? 'symbol' : 'underlying_symbol']: cfg.symbol,
     };
   }
 

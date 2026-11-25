@@ -82,7 +82,8 @@ test('live mode buys and records the settled profit', async () => {
   await flush();
   const buy = client.sent.find((p) => p.buy);
   assert.equal(buy.parameters.contract_type, 'CALL');
-  assert.equal(buy.parameters.symbol, 'R_100');
+  assert.equal(buy.parameters.underlying_symbol, 'R_100');
+  assert.equal(buy.parameters.symbol, undefined);
   client.streams.get('poc')({ proposal_open_contract: { is_sold: 1, profit: '-1.00', entry_spot: 4, exit_spot: 3 } });
   await flush();
   assert.equal(risk.trades, 1);
@@ -105,4 +106,11 @@ test('paper mode falls back to PAPER_PAYOUT when the feed will not quote', async
   client.tick(7);
   assert.equal(risk.trades, 1);
   assert.equal(risk.profit, 0.9);
+});
+
+test('legacy API keeps the old `symbol` field', () => {
+  const { bot } = makeBot({ api: 'legacy' });
+  const p = bot.contractParams('PUT', 1);
+  assert.equal(p.symbol, 'R_100');
+  assert.equal(p.underlying_symbol, undefined);
 });
