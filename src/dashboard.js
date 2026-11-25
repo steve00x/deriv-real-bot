@@ -82,6 +82,8 @@ export class DashboardState {
         contract: c.contract,
         contractName: CONTRACTS[c.contract ?? 'rise_fall'].name,
         strategy: c.strategy,
+        barrier: c.contract === 'higher_lower' ? c.barrier : null,
+        tradeSide: c.contract === 'higher_lower' ? c.tradeSide : null,
         symbol: c.symbol,
         duration: `${c.duration}${c.durationUnit}`,
         stake: c.stake,

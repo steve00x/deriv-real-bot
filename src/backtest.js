@@ -4,8 +4,9 @@
 //   npm run backtest                    (5000 ticks of SYMBOL)
 //   npm run backtest -- --ticks 20000   (more history)
 //   npm run backtest -- --contract even_odd
-import { CONTRACTS, contractOutcome, inferDecimals } from './contracts.js';
-import { STRATEGIES, RandomStrategy, buildStrategy } from './strategy.js';
+//   npm run backtest -- --contract higher_lower --barrier +0.1
+import { CONTRACTS, contractOutcome, inferDecimals, labelFor } from './contracts.js';
+import { RandomStrategy, buildStrategy, strategiesFor } from './strategy.js';
 import { decimalsFromPipSize } from './bot.js';
 
 export { RandomStrategy };
@@ -14,7 +15,7 @@ const isRiseFall = (t) => t === 'CALL' || t === 'PUT';
 
 /** Every strategy for the configured contract, with `random` as the baseline. */
 export function allStrategies(cfg) {
-  return STRATEGIES[cfg.contract ?? 'rise_fall'].map((name) => {
+  return strategiesFor(cfg).map((name) => {
     const s = buildStrategy(cfg, name);
     if (name === 'random') s.name = 'random (baseline)';
     return s;
@@ -26,7 +27,14 @@ export function allStrategies(cfg) {
  * Signal on tick i -> entry is tick i+1 -> exit is tick i+1+duration.
  * After the exit the strategy waits `cooldown` ticks before deciding again.
  */
-export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout = 0.95, stake = 1, decimals = 2 } = {}) {
+/**
+ * `payout` is the profit per 1 staked on a win: a number, or a map by contract
+ * type when the two sides pay differently (Higher/Lower with a barrier).
+ * `barrier` is the Higher/Lower offset (0 otherwise).
+ */
+export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout = 0.95, stake = 1, decimals = 2, barrier = 0 } = {}) {
+  const payoutFor = (type) => (typeof payout === 'number' ? payout : payout[type]);
+  const results = []; // profit of each trade, for the significance test
   let profit = 0;
   let peak = 0;
   let maxDrawdown = 0;
@@ -50,18 +58,19 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
     }
     const entryIdx = i + 1;
     const exitIdx = entryIdx + duration;
-    const won = contractOutcome(signal, prices[entryIdx], prices[exitIdx], decimals) === 'won';
-    if (isRiseFall(signal) && prices[entryIdx] === prices[exitIdx]) ties += 1;
-    if (isRiseFall(signal)) riseFallTrades += 1;
+    const won = contractOutcome(signal, prices[entryIdx], prices[exitIdx], decimals, barrier) === 'won';
+    if (isRiseFall(signal) && !barrier && prices[entryIdx] === prices[exitIdx]) ties += 1;
+    if (isRiseFall(signal) && !barrier) riseFallTrades += 1;
 
     trades += 1;
     if (signal === 'CALL') calls += 1;
+    const p = won ? stake * payoutFor(signal) : -stake;
+    results.push(p);
+    profit += p;
     if (won) {
       wins += 1;
-      profit += stake * payout;
       streak = 0;
     } else {
-      profit -= stake;
       streak += 1;
       maxLosingStreak = Math.max(maxLosingStreak, streak);
     }
@@ -71,9 +80,14 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
   }
 
   const winRate = trades ? wins / trades : 0;
-  // How many standard errors the win rate sits above the break-even rate.
-  const breakEven = 1 / (1 + payout);
-  const z = trades ? (winRate - breakEven) / Math.sqrt((breakEven * (1 - breakEven)) / trades) : 0;
+  // Significance: how many standard errors the average profit per trade sits
+  // above zero. Works when the two sides pay differently.
+  const mean = trades ? profit / trades : 0;
+  const variance = trades > 1 ? results.reduce((a, x) => a + (x - mean) ** 2, 0) / (trades - 1) : 0;
+  const z = trades > 1 && variance > 0 ? mean / Math.sqrt(variance / trades) : 0;
+  // Break-even win rate for the payout actually earned on this strategy's trades.
+  const avgPayout = typeof payout === 'number' ? payout : (payoutFor('CALL') + payoutFor('PUT')) / 2;
+  const breakEven = 1 / (1 + avgPayout);
   return {
     name: strategy.name,
     trades,
@@ -94,12 +108,12 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
 /** Plain-language verdict for one result. */
 export function verdict(r) {
   if (r.trades < 100) return 'too few trades to judge';
-  if (r.z >= 2) return 'beats break-even (check on new data before trusting it)';
+  if (r.z >= 2) return 'profitable beyond chance (check on new data before trusting it)';
   if (r.z <= -2) return 'clearly loses';
   return 'no proven edge (indistinguishable from chance)';
 }
 
-export function formatReport(results, { symbol, ticks, duration, payout, contract = 'rise_fall' }) {
+export function formatReport(results, { symbol, ticks, duration, payout, contract = 'rise_fall', barrier = null, side = null }) {
   const pct = (x) => `${(x * 100).toFixed(1)}%`;
   const money = (x) => (x >= 0 ? '+' : '') + x.toFixed(2);
   const rows = results.map((r) => [
@@ -118,18 +132,25 @@ export function formatReport(results, { symbol, ticks, duration, payout, contrac
   const line = (cells) => cells.map((cell, c) => cell.padEnd(widths[c])).join('  ');
 
   const out = [
-    `Backtest: ${ticks} ticks of ${symbol}, ${duration}-tick ${CONTRACTS[contract].name}, stake 1, win pays +${payout}`,
-    `Break-even win rate: ${pct(results[0]?.breakEven ?? 1 / (1 + payout))}`,
+    `Backtest: ${ticks} ticks of ${symbol}, ${duration}-tick ${CONTRACTS[contract].name}` +
+      `${barrier ? ` (barrier ${barrier})` : ''}${side && side !== 'both' ? `, ${side.toUpperCase()} only` : ''}, stake 1`,
+    ...(typeof payout === 'number'
+      ? [`A win pays +${payout}; break-even win rate ${pct(1 / (1 + payout))}`]
+      : CONTRACTS[contract].types.map(
+          (t) => `${labelFor(contract, t)} pays +${payout[t].toFixed(3)} on a win; break-even win rate ${pct(1 / (1 + payout[t]))}`,
+        )),
     '',
     line(header),
     line(widths.map((w) => '-'.repeat(w))),
     ...rows.map(line),
     '',
-    contract === 'rise_fall'
-      ? 'ties = exit price equal to entry price; Rise/Fall loses on a tie, whichever side you pick.'
-      : 'Even/Odd is decided by the last digit of the exit price; there are no ties.',
+    {
+      rise_fall: 'ties = exit price equal to entry price; Rise/Fall loses on a tie, whichever side you pick.',
+      higher_lower: 'Higher wins above entry + barrier, Lower below it; landing exactly on the barrier loses both.',
+      even_odd: 'Even/Odd is decided by the last digit of the exit price; there are no ties.',
+    }[contract],
     'max drawdown = biggest drop from a profit peak, in stake units; worst streak = most losses in a row.',
-    'A strategy only "beats break-even" if its win rate is at least 2 standard errors above it.',
+    'Verdicts test average profit per trade: "profitable beyond chance" needs it at least 2 standard errors above zero.',
   ];
   return out.join('\n');
 }
@@ -178,6 +199,33 @@ export function describeData(prices, times) {
   );
 }
 
+/**
+ * Ask Deriv what each side currently pays (profit per 1 staked), so the
+ * backtest uses real payouts. Falls back to PAPER_PAYOUT if quotes fail.
+ */
+export async function quotePayouts(client, cfg, log) {
+  const { Bot } = await import('./bot.js');
+  const bot = new Bot({ cfg, client, strategy: null, risk: null, log });
+  const out = {};
+  for (const type of CONTRACTS[cfg.contract].types) {
+    try {
+      const { proposal } = await client.request({ proposal: 1, ...bot.contractParams(type, 1) }, 10_000);
+      out[type] = Number(proposal.payout) - 1;
+    } catch (err) {
+      if (cfg.contract === 'higher_lower') {
+        throw new Error(
+          `Could not get a ${labelFor(cfg.contract, type)} quote from Deriv (${err.message}). ` +
+            'Higher/Lower payouts depend on the barrier, so the backtest needs real quotes. Try a different BARRIER.',
+        );
+      }
+      log.warn(`Could not get a quote from Deriv (${err.message}); using PAPER_PAYOUT ${cfg.paperPayout}`);
+      return cfg.paperPayout;
+    }
+  }
+  const values = Object.values(out);
+  return values.every((v) => Math.abs(v - values[0]) < 1e-9) ? values[0] : out;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { loadConfig, validateConfig } = await import('./config.js');
   const { DerivClient } = await import('./derivClient.js');
@@ -188,7 +236,14 @@ export async function main(argv = process.argv.slice(2)) {
     return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
   };
   const contract = arg('contract', null);
-  const env = contract ? { ...process.env, CONTRACT: contract } : process.env;
+  const barrierArg = arg('barrier', null);
+  const sideArg = arg('side', null);
+  const env = {
+    ...process.env,
+    ...(contract && { CONTRACT: contract }),
+    ...(barrierArg && { BARRIER: barrierArg }),
+    ...(sideArg && { TRADE_SIDE: sideArg }),
+  };
   const cfg = validateConfig({ ...loadConfig(env), paper: true });
   const ticks = Number(arg('ticks', 5000));
   const symbol = arg('symbol', cfg.symbol);
@@ -201,8 +256,10 @@ export async function main(argv = process.argv.slice(2)) {
       : [publicWsUrl(cfg)];
   await client.connect(urls);
   let data;
+  let payout = cfg.paperPayout;
   try {
     data = await fetchHistory(client, symbol, ticks, log);
+    payout = await quotePayouts(client, { ...cfg, symbol }, log);
   } finally {
     client.close();
   }
@@ -210,9 +267,18 @@ export async function main(argv = process.argv.slice(2)) {
   log.info(describeData(prices, data.times));
 
   const decimals = data.decimals ?? inferDecimals(prices);
-  const opts = { duration: cfg.duration, cooldown: cfg.cooldownTicks, payout: cfg.paperPayout, decimals };
+  const barrier = cfg.contract === 'higher_lower' ? Number(cfg.barrier) : 0;
+  const opts = { duration: cfg.duration, cooldown: cfg.cooldownTicks, payout, decimals, barrier };
   const results = allStrategies(cfg).map((s) => backtest(prices, s, opts));
-  const meta = { symbol, ticks: prices.length, duration: cfg.duration, payout: cfg.paperPayout, contract: cfg.contract };
+  const meta = {
+    symbol,
+    ticks: prices.length,
+    duration: cfg.duration,
+    payout,
+    contract: cfg.contract,
+    barrier: barrier ? cfg.barrier : null,
+    side: cfg.contract === 'higher_lower' ? cfg.tradeSide : null,
+  };
   console.log(`\n${formatReport(results, meta)}`);
 }
 

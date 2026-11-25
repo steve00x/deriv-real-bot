@@ -47,7 +47,7 @@ test('random baseline is reproducible and roughly 50/50 on a random walk', () =>
 test('report shows break-even and a verdict per strategy', () => {
   const r = backtest([0, 1, 2, 3], always('CALL'), { duration: 1, cooldown: 0 });
   const text = formatReport([r], { symbol: 'R_100', ticks: 4, duration: 1, payout: 0.95 });
-  assert.match(text, /Break-even win rate: 51\.3%/);
+  assert.match(text, /break-even win rate 51\.3%/);
   assert.match(text, /too few trades to judge/);
 });
 

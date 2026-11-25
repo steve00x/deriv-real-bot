@@ -2,16 +2,33 @@
 //
 // rise_fall: Rise (CALL) wins if exit > entry; Fall (PUT) wins if exit < entry.
 //            A tie (exit == entry) loses both.
+// higher_lower: Higher (CALL + barrier) wins if exit > entry + barrier;
+//            Lower (PUT + barrier) wins if exit < entry + barrier. The barrier
+//            is a signed offset such as +0.10; Deriv prices the payout from it.
 // even_odd:  Even (DIGITEVEN) / Odd (DIGITODD) win on the parity of the LAST
 //            DIGIT of the exit price, shown to the market's decimal places
 //            (R_100 has 2, so 428.50 -> last digit 0 -> Even).
 
 export const CONTRACTS = {
   rise_fall: { name: 'Rise/Fall', types: ['CALL', 'PUT'] },
+  higher_lower: { name: 'Higher/Lower', types: ['CALL', 'PUT'], barrier: true },
   even_odd: { name: 'Even/Odd', types: ['DIGITEVEN', 'DIGITODD'] },
 };
 
 export const LABELS = { CALL: 'RISE', PUT: 'FALL', DIGITEVEN: 'EVEN', DIGITODD: 'ODD' };
+const HIGHER_LOWER_LABELS = { CALL: 'HIGHER', PUT: 'LOWER' };
+
+/** Display name of a contract type within a contract family. */
+export function labelFor(contract, contractType) {
+  if (contract === 'higher_lower') return HIGHER_LOWER_LABELS[contractType] ?? contractType;
+  return LABELS[contractType] ?? contractType;
+}
+
+/** Normalise a barrier offset to Deriv's signed string form: 0.1 -> "+0.1". */
+export function formatBarrier(barrier) {
+  const s = String(barrier).trim();
+  return /^[+-]/.test(s) ? s : `+${s}`;
+}
 
 /** Last digit of a price shown to `decimals` places (trailing zeros count). */
 export function lastDigit(price, decimals) {
@@ -31,12 +48,19 @@ export function inferDecimals(prices) {
   return max;
 }
 
-export function contractOutcome(contractType, entry, exit, decimals = 2) {
+/**
+ * Settle a contract. `barrier` is the Higher/Lower offset (0 for Rise/Fall).
+ * Prices are compared at the market's precision so float noise can't flip a result.
+ */
+export function contractOutcome(contractType, entry, exit, decimals = 2, barrier = 0) {
+  const scale = 10 ** decimals;
+  const target = Math.round((Number(entry) + Number(barrier)) * scale);
+  const end = Math.round(Number(exit) * scale);
   switch (contractType) {
     case 'CALL':
-      return exit > entry ? 'won' : 'lost';
+      return end > target ? 'won' : 'lost';
     case 'PUT':
-      return exit < entry ? 'won' : 'lost';
+      return end < target ? 'won' : 'lost';
     case 'DIGITEVEN':
       return lastDigit(exit, decimals) % 2 === 0 ? 'won' : 'lost';
     case 'DIGITODD':

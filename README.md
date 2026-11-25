@@ -46,6 +46,7 @@ The dashboard is only reachable from your own computer. When the bot stops, the 
 ## Contracts (`CONTRACT=`)
 
 - `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
+- `higher_lower`: Higher wins if the exit price ends above `entry + BARRIER`, Lower if it ends below. On exactly the barrier, both lose. The barrier is an offset such as `+0.1` or `-0.25`, and Deriv sets the payout from it: an easy barrier pays little, a hard one pays more. `TRADE_SIDE=higher` (the default) makes the bot buy **only Higher**, whatever the strategy says; use `lower` or `both` to change that.
 - `even_odd`: Even wins if the **last digit** of the exit price is even (0, 2, 4, 6, 8), Odd if it is odd. The digit is taken at the market's quoted precision, so on R_100 `428.50` ends in `0`. Duration must be 1-10 ticks.
 
 ## Strategies (`STRATEGY=`)
@@ -58,6 +59,12 @@ The dashboard is only reachable from your own computer. When the bot stops, the 
 - `rsi`: mean reversion. Buys Rise when RSI ≤ `RSI_LOW` and Fall when RSI ≥ `RSI_HIGH`.
 
 - `random`: coin flip, as a baseline.
+
+**Higher/Lower:**
+
+- `always_higher` (default): buys Higher every time it is allowed to trade (after the cooldown).
+- `always_lower`: buys Lower every time (needs `TRADE_SIDE=lower` or `both`).
+- `sma_cross`, `momentum`, `rsi`, `random`: the Rise/Fall signals, used as Higher/Lower. With `TRADE_SIDE=higher`, their Lower signals are skipped.
 
 **Even/Odd:**
 
@@ -82,6 +89,7 @@ npm run backtest                          # last 5000 ticks of SYMBOL
 npm run backtest -- --ticks 30000         # more history (downloaded 5000 at a time)
 npm run backtest -- --symbol 1HZ100V      # another market
 npm run backtest -- --contract even_odd   # Even/Odd strategies
+npm run backtest -- --contract higher_lower --barrier +0.1   # Higher/Lower (real Deriv payouts)
 ```
 
 This downloads real tick history from the public feed and replays it through every strategy, plus a **random coin-flip baseline**. It uses the same rules as paper trading: entry on the tick after the signal, exit `DURATION` ticks later, `COOLDOWN_TICKS` between trades, stake 1, and a win paying `PAPER_PAYOUT`. Strategy settings come from `.env`.

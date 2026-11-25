@@ -3,7 +3,7 @@
 // Supports Rise/Fall and Even/Odd contracts (see contracts.js).
 import { EventEmitter } from 'node:events';
 import { fmt } from './risk.js';
-import { CONTRACTS, LABELS, contractOutcome, inferDecimals, lastDigit } from './contracts.js';
+import { CONTRACTS, labelFor, contractOutcome, formatBarrier, inferDecimals, lastDigit } from './contracts.js';
 
 const HISTORY_SIZE = 500;
 const round2 = (x) => Math.round(x * 100) / 100;
@@ -83,7 +83,8 @@ export class Bot extends EventEmitter {
     log.info(`Loaded ${this.prices.length} ticks of ${cfg.symbol} history (${this.decimals} decimals)`);
     this.emit('ready', { prices: [...this.prices], decimals: this.decimals });
     log.info(
-      `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} contract=${CONTRACTS[cfg.contract ?? 'rise_fall'].name} strategy=${this.strategy.name} ` +
+      `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} contract=${CONTRACTS[cfg.contract ?? 'rise_fall'].name}` +
+        `${cfg.contract === 'higher_lower' ? ` barrier=${formatBarrier(cfg.barrier)} side=${cfg.tradeSide}` : ''} strategy=${this.strategy.name} ` +
         `duration=${cfg.duration}${cfg.durationUnit} stake=${cfg.stake} ${this.currency}`,
     );
 
@@ -141,9 +142,16 @@ export class Bot extends EventEmitter {
     });
   }
 
+  /** Numeric Higher/Lower barrier offset (0 for other contracts). */
+  barrierOffset() {
+    return this.cfg.contract === 'higher_lower' ? Number(this.cfg.barrier) : 0;
+  }
+
   contractParams(contractType, stake) {
     const { cfg } = this;
+    const barrier = cfg.contract === 'higher_lower' ? { barrier: formatBarrier(cfg.barrier) } : {};
     return {
+      ...barrier,
       amount: stake,
       basis: 'stake',
       contract_type: contractType,
@@ -158,7 +166,7 @@ export class Bot extends EventEmitter {
   async placeTrade(contractType) {
     const stake = this.risk.nextStake();
     const params = this.contractParams(contractType, stake);
-    const label = LABELS[contractType];
+    const label = labelFor(this.cfg.contract, contractType);
 
     if (this.cfg.paper) {
       // Ask Deriv for a real quote so simulated payouts match the market; the
@@ -214,10 +222,10 @@ export class Bot extends EventEmitter {
     t.ticks += 1;
     if (t.ticks < this.cfg.duration) return;
 
-    const outcome = contractOutcome(t.contractType, t.entry, price, this.decimals);
+    const outcome = contractOutcome(t.contractType, t.entry, price, this.decimals, this.barrierOffset());
     const profit = outcome === 'won' ? t.payout - t.stake : -t.stake;
     this.paperTrade = null;
-    this.settle(LABELS[t.contractType], profit, t.entry, price);
+    this.settle(labelFor(this.cfg.contract, t.contractType), profit, t.entry, price);
   }
 
   settle(label, profit, entry, exit) {

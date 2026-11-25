@@ -1,5 +1,7 @@
 // Bot configuration, read from environment variables (see .env.example).
 
+const DEFAULT_STRATEGY = { rise_fall: 'sma_cross', higher_lower: 'always_higher', even_odd: 'digit_contrarian' };
+
 export function loadConfig(env = process.env) {
   // A blank line in .env (e.g. `STRATEGY=`) means "use the default".
   const str = (name, def) => {
@@ -33,10 +35,13 @@ export function loadConfig(env = process.env) {
     durationUnit: str('DURATION_UNIT', 't'), // t = ticks, s = seconds, m = minutes
 
     // Strategy
-    contract: str('CONTRACT', 'rise_fall').toLowerCase(), // rise_fall | even_odd
-    // rise_fall: sma_cross | momentum | rsi | random
-    // even_odd:  digit_contrarian | digit_follow | random
-    strategy: str('STRATEGY', str('CONTRACT', 'rise_fall').toLowerCase() === 'even_odd' ? 'digit_contrarian' : 'sma_cross'),
+    contract: str('CONTRACT', 'rise_fall').toLowerCase(), // rise_fall | higher_lower | even_odd
+    // rise_fall:    sma_cross | momentum | rsi | random
+    // higher_lower: always_higher | always_lower | sma_cross | momentum | rsi | random
+    // even_odd:     digit_contrarian | digit_follow | random
+    strategy: str('STRATEGY', DEFAULT_STRATEGY[str('CONTRACT', 'rise_fall').toLowerCase()] ?? 'sma_cross'),
+    barrier: str('BARRIER', '+0.1'), // Higher/Lower: offset from the entry price
+    tradeSide: str('TRADE_SIDE', 'higher').toLowerCase(), // Higher/Lower: higher (only Higher) | lower | both
     digitWindow: num('DIGIT_WINDOW', 3), // same-parity digits in a row before an Even/Odd trade
     fastPeriod: num('FAST_PERIOD', 5),
     slowPeriod: num('SLOW_PERIOD', 20),
@@ -69,7 +74,20 @@ export function validateConfig(cfg) {
   }
   if (cfg.paper && cfg.durationUnit !== 't') throw new Error('Paper trading only supports tick durations (DURATION_UNIT=t)');
   if (cfg.stake <= 0 || cfg.maxStake < cfg.stake) throw new Error('STAKE must be > 0 and MAX_STAKE >= STAKE');
-  if (!['rise_fall', 'even_odd'].includes(cfg.contract)) throw new Error('CONTRACT must be "rise_fall" or "even_odd"');
+  if (!['rise_fall', 'higher_lower', 'even_odd'].includes(cfg.contract)) {
+    throw new Error('CONTRACT must be "rise_fall", "higher_lower" or "even_odd"');
+  }
+  if (cfg.contract === 'higher_lower') {
+    if (!/^[+-]?\d+(\.\d+)?$/.test(cfg.barrier) || Number(cfg.barrier) === 0) {
+      throw new Error('BARRIER must be a non-zero offset such as +0.1 or -0.25 (0 is just Rise/Fall)');
+    }
+    cfg.barrier = /^[+-]/.test(cfg.barrier) ? cfg.barrier : `+${cfg.barrier}`;
+    if (!['higher', 'lower', 'both'].includes(cfg.tradeSide)) throw new Error('TRADE_SIDE must be higher, lower or both');
+    const opposite = { higher: 'always_lower', lower: 'always_higher' }[cfg.tradeSide];
+    if (cfg.strategy === opposite) {
+      throw new Error(`STRATEGY=${opposite} never trades when TRADE_SIDE=${cfg.tradeSide}`);
+    }
+  }
   if (cfg.contract === 'even_odd' && (cfg.durationUnit !== 't' || cfg.duration < 1 || cfg.duration > 10)) {
     throw new Error('Even/Odd contracts last 1-10 ticks: set DURATION_UNIT=t and DURATION between 1 and 10');
   }

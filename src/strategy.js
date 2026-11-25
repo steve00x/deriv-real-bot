@@ -137,15 +137,60 @@ export class RandomStrategy {
   }
 }
 
+/** Buys the same side on every decision (e.g. always Higher). */
+export class AlwaysStrategy {
+  constructor(side, name) {
+    this.name = name;
+    this.side = side;
+    this.minHistory = 1;
+  }
+
+  decide() {
+    return this.side;
+  }
+}
+
+/** Wraps a strategy so it only ever trades one side (e.g. Higher only). */
+export class SideFilter {
+  constructor(inner, allowed) {
+    this.inner = inner;
+    this.allowed = allowed;
+    this.name = inner.name;
+    this.minHistory = inner.minHistory;
+  }
+
+  decide(prices, ctx) {
+    const signal = this.inner.decide(prices, ctx);
+    return signal === this.allowed ? signal : null;
+  }
+}
+
+/** Strategies that make sense for a contract (and Higher/Lower trade side). */
+export function strategiesFor(cfg) {
+  const list = STRATEGIES[cfg.contract ?? 'rise_fall'];
+  if (cfg.contract !== 'higher_lower') return list;
+  if (cfg.tradeSide === 'higher') return list.filter((n) => n !== 'always_lower');
+  if (cfg.tradeSide === 'lower') return list.filter((n) => n !== 'always_higher');
+  return list;
+}
+
 export const STRATEGIES = {
   rise_fall: ['sma_cross', 'momentum', 'rsi', 'random'],
+  // Higher/Lower uses CALL/PUT like Rise/Fall, so the price strategies work too.
+  higher_lower: ['always_higher', 'always_lower', 'sma_cross', 'momentum', 'rsi', 'random'],
   even_odd: ['digit_contrarian', 'digit_follow', 'random'],
 };
 
 export function buildStrategy(cfg, name = cfg.strategy) {
+  const strategy = buildRawStrategy(cfg, name);
+  const side = { higher: 'CALL', lower: 'PUT' }[cfg.contract === 'higher_lower' ? cfg.tradeSide : null];
+  return side ? new SideFilter(strategy, side) : strategy;
+}
+
+function buildRawStrategy(cfg, name) {
   const contract = cfg.contract ?? 'rise_fall';
   const allowed = STRATEGIES[contract];
-  if (!allowed) throw new Error(`Unknown contract "${contract}" (use rise_fall or even_odd)`);
+  if (!allowed) throw new Error(`Unknown contract "${contract}" (use ${Object.keys(STRATEGIES).join(', ')})`);
   if (!allowed.includes(name)) {
     throw new Error(`Unknown strategy "${name}" for ${contract} (use ${allowed.join(', ')})`);
   }
@@ -156,6 +201,10 @@ export function buildStrategy(cfg, name = cfg.strategy) {
       return new MomentumStrategy(cfg.momentumWindow);
     case 'rsi':
       return new RsiStrategy(cfg.rsiPeriod, cfg.rsiLow, cfg.rsiHigh);
+    case 'always_higher':
+      return new AlwaysStrategy('CALL', 'always_higher');
+    case 'always_lower':
+      return new AlwaysStrategy('PUT', 'always_lower');
     case 'digit_contrarian':
       return new DigitContrarianStrategy(cfg.digitWindow);
     case 'digit_follow':

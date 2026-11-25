@@ -6,7 +6,7 @@ import { resolveConnection } from './derivApi.js';
 import { Bot } from './bot.js';
 import { RiskManager } from './risk.js';
 import { buildStrategy } from './strategy.js';
-import { CONTRACTS, LABELS } from './contracts.js';
+import { CONTRACTS, labelFor } from './contracts.js';
 
 const log = { info: (m) => console.log(`OK    ${m}`), warn: (m) => console.warn(`WARN  ${m}`), error: (m) => console.error(`FAIL  ${m}`) };
 
@@ -34,7 +34,7 @@ export async function runCheck(env = process.env, { fetchImpl, client = new Deri
     const type = CONTRACTS[cfg.contract].types[0];
     const params = bot.contractParams(type, cfg.stake);
     const { proposal } = await client.request({ proposal: 1, ...params });
-    log.info(`Quote for a ${cfg.duration}${cfg.durationUnit} ${LABELS[type]} at stake ${cfg.stake}: payout ${proposal.payout} (nothing was bought)`);
+    log.info(`Quote for a ${cfg.duration}${cfg.durationUnit} ${labelFor(cfg.contract, type)}${cfg.contract === 'higher_lower' ? ` (barrier ${cfg.barrier})` : ''} at stake ${cfg.stake}: payout ${proposal.payout} (nothing was bought)`);
     return { ok: true, payout: Number(proposal.payout), account };
   } finally {
     client.close();
