@@ -1,5 +1,8 @@
 // Minimal client for the Deriv WebSocket API (https://api.deriv.com).
 // Uses the WebSocket built into Node.js 22+.
+import http from 'node:http';
+import https from 'node:https';
+import { randomBytes } from 'node:crypto';
 
 export class DerivAPIError extends Error {
   constructor(code, message) {
@@ -22,16 +25,54 @@ const HINTS = {
   SELF_SIGNED_CERT_IN_CHAIN: 'TLS certificate not trusted (antivirus HTTPS scanning or a corporate proxy)',
 };
 
-/** Plain HTTPS probe to learn why a host is unreachable (WebSocket errors hide the cause). */
-async function diagnose(host) {
-  try {
-    const res = await fetch(`https://${host}/`, { signal: AbortSignal.timeout(10_000) });
-    return ` (server is reachable over HTTPS, status ${res.status})`;
-  } catch (err) {
-    const cause = err.cause ?? err;
-    const code = cause.code || cause.name;
-    return ` [${code}: ${HINTS[code] || cause.message}]`;
-  }
+// Cloudflare in front of Deriv can reject clients that don't look like a browser.
+export const HANDSHAKE_HEADERS = {
+  Origin: 'https://app.deriv.com',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) deriv-rise-fall-bot/1.0',
+};
+
+/**
+ * Repeat the WebSocket handshake with node:https to see the server's actual answer
+ * (Node's WebSocket only reports "1006" when the handshake is rejected).
+ */
+export function diagnose(url, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    const target = url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+    const req = (target.startsWith('https:') ? https : http).request(target, {
+      headers: {
+        ...HANDSHAKE_HEADERS,
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': randomBytes(16).toString('base64'),
+      },
+      timeout: timeoutMs,
+    });
+    req.on('upgrade', (res, socket) => {
+      socket.destroy();
+      resolve(' (a fresh handshake succeeded, so the failure may be intermittent; try again)');
+    });
+    req.on('response', (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        if (body.length < 4000) body += chunk;
+      });
+      res.on('end', () => {
+        const text = body
+          .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 300);
+        const ray = res.headers['cf-ray'] ? ` cf-ray=${res.headers['cf-ray']}` : '';
+        resolve(` [handshake rejected: HTTP ${res.statusCode}${ray}${text ? ` - "${text}"` : ''}]`);
+      });
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
+    req.on('error', (err) => resolve(` [${err.code}: ${HINTS[err.code] || err.message}]`));
+    req.end();
+  });
 }
 
 export class DerivClient {
@@ -60,7 +101,7 @@ export class DerivClient {
         this.log.info(`Connected to wss://${host}`);
         return;
       } catch (err) {
-        const why = `${err.message}${await diagnose(host)}`;
+        const why = `${err.message}${await diagnose(url)}`;
         this.log.warn(`Could not connect to ${host}: ${why}`);
         failures.push(`${host}: ${why}`);
       }
@@ -73,7 +114,7 @@ export class DerivClient {
 
   #open(url, timeoutMs = 15_000) {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, { headers: HANDSHAKE_HEADERS });
       let opened = false;
       let errorText = '';
       const timer = setTimeout(() => {
