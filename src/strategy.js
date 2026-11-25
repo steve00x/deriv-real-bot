@@ -1,5 +1,6 @@
-// Signal generators for Rise/Fall.
-// decide(prices) returns 'CALL' (Rise), 'PUT' (Fall) or null (no trade).
+// Signal generators.
+// Rise/Fall: decide(prices) returns 'CALL' (Rise), 'PUT' (Fall) or null (no trade).
+import { CONTRACTS, lastDigit } from './contracts.js';
 
 export const sma = (values, period) =>
   values.slice(-period).reduce((a, b) => a + b, 0) / period;
@@ -77,15 +78,89 @@ export class RsiStrategy {
   }
 }
 
-export function buildStrategy(cfg) {
-  switch (cfg.strategy) {
+// ---------------------------------------------------------------------------
+// Even/Odd (digit) strategies. decide(prices, { decimals }) returns
+// 'DIGITEVEN', 'DIGITODD' or null, based on the last digits of recent ticks.
+
+const parity = (prices, decimals) => prices.map((p) => lastDigit(p, decimals) % 2); // 0 even, 1 odd
+
+/** After N same-parity last digits in a row, bet the other parity ("it's due"). */
+export class DigitContrarianStrategy {
+  constructor(window) {
+    this.name = 'digit_contrarian';
+    this.window = window;
+    this.minHistory = window;
+  }
+
+  decide(prices, { decimals = 2 } = {}) {
+    if (prices.length < this.window) return null;
+    const p = parity(prices.slice(-this.window), decimals);
+    if (p.every((x) => x === 0)) return 'DIGITODD';
+    if (p.every((x) => x === 1)) return 'DIGITEVEN';
+    return null;
+  }
+}
+
+/** After N same-parity last digits in a row, bet the streak continues. */
+export class DigitFollowStrategy {
+  constructor(window) {
+    this.name = 'digit_follow';
+    this.window = window;
+    this.minHistory = window;
+  }
+
+  decide(prices, { decimals = 2 } = {}) {
+    if (prices.length < this.window) return null;
+    const p = parity(prices.slice(-this.window), decimals);
+    if (p.every((x) => x === 0)) return 'DIGITEVEN';
+    if (p.every((x) => x === 1)) return 'DIGITODD';
+    return null;
+  }
+}
+
+/** Coin flip between the two sides of a contract; seeded so runs are reproducible. */
+export class RandomStrategy {
+  constructor(seed = 42, sides = CONTRACTS.rise_fall.types) {
+    this.name = 'random';
+    this.minHistory = 1;
+    this.sides = sides;
+    this.state = seed >>> 0;
+  }
+
+  decide() {
+    // mulberry32 PRNG
+    let t = (this.state += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    const r = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    return r < 0.5 ? this.sides[0] : this.sides[1];
+  }
+}
+
+export const STRATEGIES = {
+  rise_fall: ['sma_cross', 'momentum', 'rsi', 'random'],
+  even_odd: ['digit_contrarian', 'digit_follow', 'random'],
+};
+
+export function buildStrategy(cfg, name = cfg.strategy) {
+  const contract = cfg.contract ?? 'rise_fall';
+  const allowed = STRATEGIES[contract];
+  if (!allowed) throw new Error(`Unknown contract "${contract}" (use rise_fall or even_odd)`);
+  if (!allowed.includes(name)) {
+    throw new Error(`Unknown strategy "${name}" for ${contract} (use ${allowed.join(', ')})`);
+  }
+  switch (name) {
     case 'sma_cross':
       return new SmaCrossStrategy(cfg.fastPeriod, cfg.slowPeriod);
     case 'momentum':
       return new MomentumStrategy(cfg.momentumWindow);
     case 'rsi':
       return new RsiStrategy(cfg.rsiPeriod, cfg.rsiLow, cfg.rsiHigh);
+    case 'digit_contrarian':
+      return new DigitContrarianStrategy(cfg.digitWindow);
+    case 'digit_follow':
+      return new DigitFollowStrategy(cfg.digitWindow);
     default:
-      throw new Error(`Unknown strategy "${cfg.strategy}" (use sma_cross, momentum or rsi)`);
+      return new RandomStrategy(42, CONTRACTS[contract].types);
   }
 }

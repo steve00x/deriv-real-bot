@@ -1,11 +1,12 @@
 // Live-mode connection check: logs in, opens the trading socket and asks for
-// a Rise quote, but NEVER buys.   npm run check
+// a quote for the configured contract, but NEVER buys.   npm run check
 import { loadConfig, validateConfig } from './config.js';
 import { DerivClient } from './derivClient.js';
 import { resolveConnection } from './derivApi.js';
 import { Bot } from './bot.js';
 import { RiskManager } from './risk.js';
 import { buildStrategy } from './strategy.js';
+import { CONTRACTS, LABELS } from './contracts.js';
 
 const log = { info: (m) => console.log(`OK    ${m}`), warn: (m) => console.warn(`WARN  ${m}`), error: (m) => console.error(`FAIL  ${m}`) };
 
@@ -30,9 +31,10 @@ export async function runCheck(env = process.env, { fetchImpl, client = new Deri
     });
     if (balance?.balance) log.info(`Balance: ${balance.balance.balance} ${balance.balance.currency}`);
 
-    const params = bot.contractParams('CALL', cfg.stake);
+    const type = CONTRACTS[cfg.contract].types[0];
+    const params = bot.contractParams(type, cfg.stake);
     const { proposal } = await client.request({ proposal: 1, ...params });
-    log.info(`Quote for a ${cfg.duration}${cfg.durationUnit} RISE at stake ${cfg.stake}: payout ${proposal.payout} (nothing was bought)`);
+    log.info(`Quote for a ${cfg.duration}${cfg.durationUnit} ${LABELS[type]} at stake ${cfg.stake}: payout ${proposal.payout} (nothing was bought)`);
     return { ok: true, payout: Number(proposal.payout), account };
   } finally {
     client.close();

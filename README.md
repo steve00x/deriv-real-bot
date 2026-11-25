@@ -1,6 +1,6 @@
-# Deriv Rise/Fall Bot
+# Deriv Rise/Fall & Even/Odd Bot
 
-An automated trading bot for Deriv **Rise/Fall** contracts, written in plain JavaScript (Node.js 22+, no dependencies).
+An automated trading bot for Deriv **Rise/Fall** and **Even/Odd** contracts, written in plain JavaScript (Node.js 22+, no dependencies).
 
 It streams live ticks over the [Deriv Options API](https://developers.deriv.com/docs/options/), asks a strategy whether to buy **Rise** (`CALL`) or **Fall** (`PUT`), and places the trade — or simulates it in paper mode — while a risk manager enforces stake size and stop conditions.
 
@@ -31,11 +31,29 @@ Deriv replaced the old `wss://ws.derivws.com/websockets/v3?app_id=1089` endpoint
 
 To set up live trading, register an app and create a token (Trade scope) at https://developers.deriv.com, then put both in `.env`. Keep `.env` private; it is git-ignored. `DERIV_API=legacy` switches back to the old endpoint if you need it.
 
+## Contracts (`CONTRACT=`)
+
+- `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
+- `even_odd`: Even wins if the **last digit** of the exit price is even (0, 2, 4, 6, 8), Odd if it is odd. The digit is taken at the market's quoted precision, so on R_100 `428.50` ends in `0`. Duration must be 1-10 ticks.
+
 ## Strategies (`STRATEGY=`)
+
+**Rise/Fall:**
+
 
 - `sma_cross`: trend following. Buys Rise when the fast SMA crosses above the slow SMA, and Fall when it crosses below.
 - `momentum`: buys in the direction of `MOMENTUM_WINDOW` consecutive ticks moving the same way.
 - `rsi`: mean reversion. Buys Rise when RSI ≤ `RSI_LOW` and Fall when RSI ≥ `RSI_HIGH`.
+
+- `random`: coin flip, as a baseline.
+
+**Even/Odd:**
+
+- `digit_contrarian` (default): after `DIGIT_WINDOW` last digits in a row with the same parity, bets the other parity.
+- `digit_follow`: after the same streak, bets that it continues.
+- `random`: coin flip, as a baseline.
+
+Last digits on Deriv's synthetic indices are random, so a streak says nothing about the next digit. Both digit strategies should score about 50% in the backtest. Check with `npm run backtest -- --contract even_odd`.
 
 To add your own, write a class with `minHistory` and `decide(prices)` that returns `'CALL'`, `'PUT'` or `null` in `src/strategy.js`, then register it in `buildStrategy`.
 
@@ -51,6 +69,7 @@ To add your own, write a class with `minHistory` and `decide(prices)` that retur
 npm run backtest                          # last 5000 ticks of SYMBOL
 npm run backtest -- --ticks 30000         # more history (downloaded 5000 at a time)
 npm run backtest -- --symbol 1HZ100V      # another market
+npm run backtest -- --contract even_odd   # Even/Odd strategies
 ```
 
 This downloads real tick history from the public feed and replays it through every strategy, plus a **random coin-flip baseline**. It uses the same rules as paper trading: entry on the tick after the signal, exit `DURATION` ticks later, `COOLDOWN_TICKS` between trades, stake 1, and a win paying `PAPER_PAYOUT`. Strategy settings come from `.env`.
@@ -66,6 +85,7 @@ The bot stops when any of these is hit: `TAKE_PROFIT`, `STOP_LOSS`, `MAX_TRADES`
 ```
 src/index.js        entry point
 src/bot.js          trading loop, paper and live execution
+src/contracts.js    contract types and how each one is settled
 src/strategy.js     signal generators
 src/backtest.js     replays tick history through all strategies
 src/risk.js         stake sizing and stop rules

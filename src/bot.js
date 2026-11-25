@@ -1,6 +1,8 @@
-// Rise/Fall trading engine: watches ticks, asks the strategy for a signal,
-// sizes the stake with the risk manager, and places (or simulates) the trade.
+// Trading engine: watches ticks, asks the strategy for a signal, sizes the
+// stake with the risk manager, and places (or simulates) the trade.
+// Supports Rise/Fall and Even/Odd contracts (see contracts.js).
 import { fmt } from './risk.js';
+import { CONTRACTS, LABELS, contractOutcome, inferDecimals, lastDigit } from './contracts.js';
 
 const HISTORY_SIZE = 500;
 const round2 = (x) => Math.round(x * 100) / 100;
@@ -10,9 +12,17 @@ const round2 = (x) => Math.round(x * 100) / 100;
  * An exit equal to the entry loses both.
  */
 export function riseFallOutcome(contractType, entry, exit) {
-  if (contractType === 'CALL') return exit > entry ? 'won' : 'lost';
-  if (contractType === 'PUT') return exit < entry ? 'won' : 'lost';
-  throw new Error(`Unknown contract type ${contractType}`);
+  if (contractType !== 'CALL' && contractType !== 'PUT') throw new Error(`Unknown contract type ${contractType}`);
+  return contractOutcome(contractType, entry, exit);
+}
+
+/** Deriv's pip_size is a count of decimals (2); accept a pip value (0.01) too. */
+export function decimalsFromPipSize(pip) {
+  const n = Number(pip);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (Number.isInteger(n) && n <= 10) return n;
+  if (n > 0 && n < 1) return Math.round(-Math.log10(n));
+  return null;
 }
 
 export class Bot {
@@ -31,6 +41,7 @@ export class Bot {
     this.account = account; // set by the new-API login flow
     this.needsAuthorize = needsAuthorize; // legacy API: log in over the socket
     this.quoteFailed = false;
+    this.decimals = 2; // decimal places the market quotes in (for Even/Odd digits)
   }
 
   /** Runs until a stop condition is hit. Resolves with the stop reason. */
@@ -57,10 +68,11 @@ export class Bot {
       style: 'ticks',
     });
     this.prices = history.prices.map(Number);
-    log.info(`Loaded ${this.prices.length} ticks of ${cfg.symbol} history`);
+    this.decimals = decimalsFromPipSize(history.pip_size) ?? inferDecimals(history.prices);
+    log.info(`Loaded ${this.prices.length} ticks of ${cfg.symbol} history (${this.decimals} decimals)`);
     log.info(
-      `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} strategy=${this.strategy.name} ` +
-        `contract=${cfg.duration}${cfg.durationUnit} stake=${cfg.stake} ${this.currency}`,
+      `Mode=${cfg.paper ? 'PAPER' : 'LIVE'} contract=${CONTRACTS[cfg.contract ?? 'rise_fall'].name} strategy=${this.strategy.name} ` +
+        `duration=${cfg.duration}${cfg.durationUnit} stake=${cfg.stake} ${this.currency}`,
     );
 
     return new Promise((resolve) => {
@@ -69,6 +81,7 @@ export class Bot {
       this.tickReq = client.subscribe({ ticks: cfg.symbol }, (msg) => {
         if (msg.error) return this.stop(`tick stream error: ${msg.error.message}`);
         this.tickSubId ??= msg.subscription?.id;
+        this.decimals = decimalsFromPipSize(msg.tick.pip_size) ?? this.decimals;
         this.onTick(Number(msg.tick.quote));
       });
     });
@@ -101,7 +114,7 @@ export class Bot {
     const reason = this.risk.stopReason();
     if (reason) return this.stop(reason);
 
-    const signal = this.strategy.decide(this.prices);
+    const signal = this.strategy.decide(this.prices, { decimals: this.decimals });
     if (!signal) return;
 
     this.busy = true;
@@ -130,7 +143,7 @@ export class Bot {
   async placeTrade(contractType) {
     const stake = this.risk.nextStake();
     const params = this.contractParams(contractType, stake);
-    const label = contractType === 'CALL' ? 'RISE' : 'FALL';
+    const label = LABELS[contractType];
 
     if (this.cfg.paper) {
       // Ask Deriv for a real quote so simulated payouts match the market; the
@@ -184,17 +197,18 @@ export class Bot {
     t.ticks += 1;
     if (t.ticks < this.cfg.duration) return;
 
-    const outcome = riseFallOutcome(t.contractType, t.entry, price);
+    const outcome = contractOutcome(t.contractType, t.entry, price, this.decimals);
     const profit = outcome === 'won' ? t.payout - t.stake : -t.stake;
     this.paperTrade = null;
-    this.settle(t.contractType === 'CALL' ? 'RISE' : 'FALL', profit, t.entry, price);
+    this.settle(LABELS[t.contractType], profit, t.entry, price);
   }
 
   settle(label, profit, entry, exit) {
     this.risk.record(profit);
     const tag = this.cfg.paper ? '[PAPER]' : '[LIVE]';
+    const digit = this.cfg.contract === 'even_odd' && exit != null ? ` last digit=${lastDigit(exit, this.decimals)}` : '';
     this.log.info(
-      `${tag} ${label} ${profit > 0 ? 'WON ' : 'LOST'} ${fmt(profit)} (entry=${entry} exit=${exit}) | ${this.risk.summary()}`,
+      `${tag} ${label} ${profit > 0 ? 'WON ' : 'LOST'} ${fmt(profit)} (entry=${entry} exit=${exit}${digit}) | ${this.risk.summary()}`,
     );
     this.busy = false;
     this.cooldown = this.cfg.cooldownTicks;

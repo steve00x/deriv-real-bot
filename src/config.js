@@ -1,7 +1,11 @@
 // Bot configuration, read from environment variables (see .env.example).
 
 export function loadConfig(env = process.env) {
-  const str = (name, def) => String(env[name] ?? def).trim();
+  // A blank line in .env (e.g. `STRATEGY=`) means "use the default".
+  const str = (name, def) => {
+    const v = String(env[name] ?? '').trim();
+    return v === '' ? String(def) : v;
+  };
   const num = (name, def) => {
     const v = Number(str(name, def));
     if (!Number.isFinite(v)) throw new Error(`${name} must be a number`);
@@ -29,7 +33,11 @@ export function loadConfig(env = process.env) {
     durationUnit: str('DURATION_UNIT', 't'), // t = ticks, s = seconds, m = minutes
 
     // Strategy
-    strategy: str('STRATEGY', 'sma_cross'), // sma_cross | momentum | rsi
+    contract: str('CONTRACT', 'rise_fall').toLowerCase(), // rise_fall | even_odd
+    // rise_fall: sma_cross | momentum | rsi | random
+    // even_odd:  digit_contrarian | digit_follow | random
+    strategy: str('STRATEGY', str('CONTRACT', 'rise_fall').toLowerCase() === 'even_odd' ? 'digit_contrarian' : 'sma_cross'),
+    digitWindow: num('DIGIT_WINDOW', 3), // same-parity digits in a row before an Even/Odd trade
     fastPeriod: num('FAST_PERIOD', 5),
     slowPeriod: num('SLOW_PERIOD', 20),
     momentumWindow: num('MOMENTUM_WINDOW', 5),
@@ -58,6 +66,11 @@ export function validateConfig(cfg) {
   }
   if (cfg.paper && cfg.durationUnit !== 't') throw new Error('Paper trading only supports tick durations (DURATION_UNIT=t)');
   if (cfg.stake <= 0 || cfg.maxStake < cfg.stake) throw new Error('STAKE must be > 0 and MAX_STAKE >= STAKE');
+  if (!['rise_fall', 'even_odd'].includes(cfg.contract)) throw new Error('CONTRACT must be "rise_fall" or "even_odd"');
+  if (cfg.contract === 'even_odd' && (cfg.durationUnit !== 't' || cfg.duration < 1 || cfg.duration > 10)) {
+    throw new Error('Even/Odd contracts last 1-10 ticks: set DURATION_UNIT=t and DURATION between 1 and 10');
+  }
+  if (cfg.digitWindow < 1) throw new Error('DIGIT_WINDOW must be at least 1');
   if (cfg.martingale < 1) throw new Error('MARTINGALE must be >= 1');
   if (cfg.fastPeriod >= cfg.slowPeriod) throw new Error('FAST_PERIOD must be smaller than SLOW_PERIOD');
   return cfg;

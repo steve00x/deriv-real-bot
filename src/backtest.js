@@ -3,34 +3,22 @@
 //
 //   npm run backtest                    (5000 ticks of SYMBOL)
 //   npm run backtest -- --ticks 20000   (more history)
-import { riseFallOutcome } from './bot.js';
-import { SmaCrossStrategy, MomentumStrategy, RsiStrategy } from './strategy.js';
+//   npm run backtest -- --contract even_odd
+import { CONTRACTS, contractOutcome, inferDecimals } from './contracts.js';
+import { STRATEGIES, RandomStrategy, buildStrategy } from './strategy.js';
+import { decimalsFromPipSize } from './bot.js';
 
-/** Coin-flip baseline with a fixed seed so runs are reproducible. */
-export class RandomStrategy {
-  constructor(seed = 42) {
-    this.name = 'random (baseline)';
-    this.minHistory = 1;
-    this.state = seed >>> 0;
-  }
+export { RandomStrategy };
 
-  decide() {
-    // mulberry32 PRNG
-    let t = (this.state += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    const r = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    return r < 0.5 ? 'CALL' : 'PUT';
-  }
-}
+const isRiseFall = (t) => t === 'CALL' || t === 'PUT';
 
+/** Every strategy for the configured contract, with `random` as the baseline. */
 export function allStrategies(cfg) {
-  return [
-    new SmaCrossStrategy(cfg.fastPeriod, cfg.slowPeriod),
-    new MomentumStrategy(cfg.momentumWindow),
-    new RsiStrategy(cfg.rsiPeriod, cfg.rsiLow, cfg.rsiHigh),
-    new RandomStrategy(),
-  ];
+  return STRATEGIES[cfg.contract ?? 'rise_fall'].map((name) => {
+    const s = buildStrategy(cfg, name);
+    if (name === 'random') s.name = 'random (baseline)';
+    return s;
+  });
 }
 
 /**
@@ -38,7 +26,7 @@ export function allStrategies(cfg) {
  * Signal on tick i -> entry is tick i+1 -> exit is tick i+1+duration.
  * After the exit the strategy waits `cooldown` ticks before deciding again.
  */
-export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout = 0.95, stake = 1 } = {}) {
+export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout = 0.95, stake = 1, decimals = 2 } = {}) {
   let profit = 0;
   let peak = 0;
   let maxDrawdown = 0;
@@ -48,21 +36,23 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
   let maxLosingStreak = 0;
   let calls = 0;
   let ties = 0;
+  let riseFallTrades = 0;
 
   // Strategies only look at their last `minHistory` ticks; pass a short window
   // (with one spare tick) instead of copying the whole history every step.
   const window = strategy.minHistory + 1;
   let i = strategy.minHistory - 1;
   while (i + 1 + duration < prices.length) {
-    const signal = strategy.decide(prices.slice(Math.max(0, i + 1 - window), i + 1));
+    const signal = strategy.decide(prices.slice(Math.max(0, i + 1 - window), i + 1), { decimals });
     if (!signal) {
       i += 1;
       continue;
     }
     const entryIdx = i + 1;
     const exitIdx = entryIdx + duration;
-    const won = riseFallOutcome(signal, prices[entryIdx], prices[exitIdx]) === 'won';
-    if (prices[entryIdx] === prices[exitIdx]) ties += 1;
+    const won = contractOutcome(signal, prices[entryIdx], prices[exitIdx], decimals) === 'won';
+    if (isRiseFall(signal) && prices[entryIdx] === prices[exitIdx]) ties += 1;
+    if (isRiseFall(signal)) riseFallTrades += 1;
 
     trades += 1;
     if (signal === 'CALL') calls += 1;
@@ -95,7 +85,7 @@ export function backtest(prices, strategy, { duration = 5, cooldown = 3, payout 
     maxLosingStreak,
     riseShare: trades ? calls / trades : 0,
     ties,
-    tieRate: trades ? ties / trades : 0,
+    tieRate: riseFallTrades ? ties / riseFallTrades : null, // ties only matter for Rise/Fall
     breakEven,
     z,
   };
@@ -109,14 +99,14 @@ export function verdict(r) {
   return 'no proven edge (indistinguishable from chance)';
 }
 
-export function formatReport(results, { symbol, ticks, duration, payout }) {
+export function formatReport(results, { symbol, ticks, duration, payout, contract = 'rise_fall' }) {
   const pct = (x) => `${(x * 100).toFixed(1)}%`;
   const money = (x) => (x >= 0 ? '+' : '') + x.toFixed(2);
   const rows = results.map((r) => [
     r.name,
     String(r.trades),
     pct(r.winRate),
-    pct(r.tieRate),
+    r.tieRate == null ? '-' : pct(r.tieRate),
     money(r.profit),
     money(r.perTrade),
     r.maxDrawdown.toFixed(2),
@@ -128,14 +118,16 @@ export function formatReport(results, { symbol, ticks, duration, payout }) {
   const line = (cells) => cells.map((cell, c) => cell.padEnd(widths[c])).join('  ');
 
   const out = [
-    `Backtest: ${ticks} ticks of ${symbol}, ${duration}-tick Rise/Fall, stake 1, win pays +${payout}`,
+    `Backtest: ${ticks} ticks of ${symbol}, ${duration}-tick ${CONTRACTS[contract].name}, stake 1, win pays +${payout}`,
     `Break-even win rate: ${pct(results[0]?.breakEven ?? 1 / (1 + payout))}`,
     '',
     line(header),
     line(widths.map((w) => '-'.repeat(w))),
     ...rows.map(line),
     '',
-    'ties = exit price equal to entry price; Rise/Fall loses on a tie, whichever side you pick.',
+    contract === 'rise_fall'
+      ? 'ties = exit price equal to entry price; Rise/Fall loses on a tie, whichever side you pick.'
+      : 'Even/Odd is decided by the last digit of the exit price; there are no ties.',
     'max drawdown = biggest drop from a profit peak, in stake units; worst streak = most losses in a row.',
     'A strategy only "beats break-even" if its win rate is at least 2 standard errors above it.',
   ];
@@ -150,11 +142,13 @@ export function formatReport(results, { symbol, ticks, duration, payout }) {
 export async function fetchHistory(client, symbol, total, log) {
   const byTime = new Map();
   let end = 'latest';
+  let pipSize;
   while (byTime.size < total) {
     const count = Math.min(5000, total - byTime.size);
     const { history } = await client.request({ ticks_history: symbol, end, count, style: 'ticks' });
     const prices = (history?.prices ?? []).map(Number);
     const times = (history?.times ?? []).map(Number);
+    pipSize ??= history?.pip_size;
     if (!prices.length || times.length !== prices.length) break;
     const before = byTime.size;
     times.forEach((t, k) => byTime.set(t, prices[k]));
@@ -167,6 +161,7 @@ export async function fetchHistory(client, symbol, total, log) {
   return {
     prices: sorted.slice(-total).map(([, p]) => p),
     times: sorted.slice(-total).map(([t]) => t),
+    decimals: decimalsFromPipSize(pipSize) ?? inferDecimals(sorted.map(([, p]) => p)),
   };
 }
 
@@ -192,7 +187,9 @@ export async function main(argv = process.argv.slice(2)) {
     const i = argv.indexOf(`--${name}`);
     return i >= 0 && argv[i + 1] ? argv[i + 1] : def;
   };
-  const cfg = validateConfig({ ...loadConfig(), paper: true });
+  const contract = arg('contract', null);
+  const env = contract ? { ...process.env, CONTRACT: contract } : process.env;
+  const cfg = validateConfig({ ...loadConfig(env), paper: true });
   const ticks = Number(arg('ticks', 5000));
   const symbol = arg('symbol', cfg.symbol);
   const log = { info: (m) => console.log(m), warn: (m) => console.warn(m), error: (m) => console.error(m) };
@@ -212,9 +209,11 @@ export async function main(argv = process.argv.slice(2)) {
   const { prices } = data;
   log.info(describeData(prices, data.times));
 
-  const opts = { duration: cfg.duration, cooldown: cfg.cooldownTicks, payout: cfg.paperPayout };
+  const decimals = data.decimals ?? inferDecimals(prices);
+  const opts = { duration: cfg.duration, cooldown: cfg.cooldownTicks, payout: cfg.paperPayout, decimals };
   const results = allStrategies(cfg).map((s) => backtest(prices, s, opts));
-  console.log(`\n${formatReport(results, { symbol, ticks: prices.length, duration: cfg.duration, payout: cfg.paperPayout })}`);
+  const meta = { symbol, ticks: prices.length, duration: cfg.duration, payout: cfg.paperPayout, contract: cfg.contract };
+  console.log(`\n${formatReport(results, meta)}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('backtest.js')) {
