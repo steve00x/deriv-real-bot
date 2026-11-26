@@ -31,7 +31,12 @@ async function main() {
   }
 
   const { urls, account, needsAuthorize } = await resolveConnection(cfg, log);
-  const bot = new Bot({ cfg, client, strategy: buildStrategy(cfg), risk, log, account, needsAuthorize });
+  // Reconnecting needs a fresh URL: in live mode the one-time password is single use.
+  const reconnect = async () => {
+    const fresh = await resolveConnection(cfg, log);
+    await client.connect(fresh.urls);
+  };
+  const bot = new Bot({ cfg, client, strategy: buildStrategy(cfg), risk, log, account, needsAuthorize, reconnect });
 
   if (state) {
     state.account = account;

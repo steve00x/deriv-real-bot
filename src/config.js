@@ -57,6 +57,8 @@ export function loadConfig(env = process.env) {
 
     // Dashboard: http://localhost:<port> while the bot runs; 0 turns it off
     dashboardPort: num('DASHBOARD_PORT', 3000),
+    // Reconnect automatically when the connection drops (0 = stop instead)
+    reconnectAttempts: num('RECONNECT_ATTEMPTS', 20),
 
     // Risk management
     stake: num('STAKE', 1),

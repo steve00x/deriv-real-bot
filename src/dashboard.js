@@ -54,6 +54,14 @@ export class DashboardState {
     bot.on('trade-error', () => {
       this.open = null;
     });
+    bot.on('disconnected', ({ attempt }) => {
+      this.status = 'reconnecting';
+      this.reconnectAttempt = attempt;
+    });
+    bot.on('reconnected', () => {
+      this.status = 'running';
+      this.reconnectAttempt = null;
+    });
     bot.on('stopped', ({ reason }) => {
       this.status = 'stopped';
       this.stopReason = reason;
@@ -76,6 +84,7 @@ export class DashboardState {
       now: Date.now(),
       status: this.status,
       stopReason: this.stopReason,
+      reconnectAttempt: this.reconnectAttempt ?? null,
       startedAt: this.startedAt,
       config: {
         mode: c.paper ? 'PAPER' : 'LIVE',
@@ -135,7 +144,7 @@ export async function startDashboard({ state, bot, port = 3000, log, host = '127
       for (const res of clients) res.write(data);
     }, 250);
   };
-  for (const ev of ['ready', 'price', 'trade-open', 'trade-close', 'trade-error', 'stopped']) bot.on(ev, broadcast);
+  for (const ev of ['ready', 'price', 'trade-open', 'trade-close', 'trade-error', 'disconnected', 'reconnected', 'stopped']) bot.on(ev, broadcast);
   state.onLog = broadcast;
 
   const server = http.createServer((req, res) => {

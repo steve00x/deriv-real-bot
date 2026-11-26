@@ -147,6 +147,7 @@ export class DerivClient {
           reject(new Error(detail || 'connection failed'));
           return;
         }
+        if (ws !== this.ws) return; // an old socket closing after a reconnect
         clearInterval(this.pingTimer);
         const err = new DerivAPIError('ConnectionClosed', 'WebSocket closed');
         for (const p of this.pending.values()) {
@@ -154,6 +155,8 @@ export class DerivClient {
           p.reject(err);
         }
         this.pending.clear();
+        // Subscriptions die with the socket; callers re-subscribe after reconnecting.
+        this.streams.clear();
         this.onClose?.(err);
       };
     });

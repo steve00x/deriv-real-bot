@@ -45,11 +45,27 @@ export function decimalsFromPipSize(pip) {
  *   trade-open   { label, stake, payout, time, contractId? }
  *   trade-close  { label, profit, won, entry, exit, digit, time }
  *   trade-error  { message, time }
+ *   disconnected { attempt, delayMs, time }  connection lost, reconnecting
+ *   reconnected  { attempts, time }
  *   stopped      { reason, time }
  */
 export class Bot extends EventEmitter {
-  constructor({ cfg, client, strategy, risk, log, account = null, needsAuthorize = Boolean(cfg.apiToken) }) {
+  constructor({
+    cfg,
+    client,
+    strategy,
+    risk,
+    log,
+    account = null,
+    needsAuthorize = Boolean(cfg.apiToken),
+    reconnect = null, // async () => connects `client` again (fresh OTP in live mode)
+    reconnectDelays = [2000, 5000, 10000, 15000, 30000],
+  }) {
     super();
+    this.reconnectFn = reconnect;
+    this.reconnectDelays = reconnectDelays;
+    this.reconnecting = false;
+    this.settlementWaiter = null; // open live contract we're waiting on
     this.cfg = cfg;
     this.client = client;
     this.strategy = strategy;
@@ -74,10 +90,7 @@ export class Bot extends EventEmitter {
   async run() {
     const { cfg, client, log } = this;
 
-    if (this.needsAuthorize) {
-      const { authorize: acct } = await client.request({ authorize: cfg.apiToken });
-      this.account = { id: acct.loginid, isVirtual: Boolean(acct.is_virtual), currency: acct.currency, balance: acct.balance };
-    }
+    if (this.needsAuthorize) await this.authorize();
     if (this.account) {
       const a = this.account;
       log.info(`Trading account ${a.id} (${a.isVirtual ? 'DEMO' : 'REAL'})${a.balance != null ? ` balance=${a.balance} ${a.currency ?? ''}` : ''}`);
@@ -106,14 +119,63 @@ export class Bot extends EventEmitter {
 
     return new Promise((resolve) => {
       this.resolveRun = resolve;
-      client.onClose = () => this.stop('connection lost');
-      this.tickReq = client.subscribe({ ticks: cfg.symbol }, (msg) => {
-        if (msg.error) return this.stop(`tick stream error: ${msg.error.message}`);
-        this.tickSubId ??= msg.subscription?.id;
-        this.decimals = decimalsFromPipSize(msg.tick.pip_size) ?? this.decimals;
-        this.onTick(Number(msg.tick.quote));
-      });
+      client.onClose = () => this.handleDisconnect();
+      this.subscribeTicks();
     });
+  }
+
+  async authorize() {
+    const { authorize: acct } = await this.client.request({ authorize: this.cfg.apiToken });
+    this.account = { id: acct.loginid, isVirtual: Boolean(acct.is_virtual), currency: acct.currency, balance: acct.balance };
+  }
+
+  subscribeTicks() {
+    this.tickSubId = null;
+    this.tickReq = this.client.subscribe({ ticks: this.cfg.symbol }, (msg) => {
+      if (msg.error) return this.stop(`tick stream error: ${msg.error.message}`);
+      this.tickSubId ??= msg.subscription?.id;
+      this.decimals = decimalsFromPipSize(msg.tick.pip_size) ?? this.decimals;
+      this.onTick(Number(msg.tick.quote));
+    });
+  }
+
+  /**
+   * The connection dropped. Keep the session (profit, stop loss, open contract)
+   * and reconnect with growing waits; stop only if every attempt fails.
+   */
+  async handleDisconnect() {
+    if (this.stopped || this.reconnecting) return;
+    const max = this.cfg.reconnectAttempts ?? 20;
+    if (!this.reconnectFn || max <= 0) return this.stop('connection lost');
+    this.reconnecting = true;
+    this.log.warn('Connection to Deriv lost. Trading is paused while the bot reconnects.');
+    if (this.paperTrade) this.log.warn('The open paper trade will settle on the ticks received after reconnecting.');
+    for (let attempt = 1; attempt <= max; attempt++) {
+      const delayMs = this.reconnectDelays[Math.min(attempt - 1, this.reconnectDelays.length - 1)];
+      this.emit('disconnected', { attempt, delayMs, time: Date.now() });
+      this.log.info(`Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${attempt}/${max})...`);
+      await new Promise((r) => setTimeout(r, delayMs));
+      if (this.stopped) return;
+      try {
+        await this.reconnectFn();
+        if (this.stopped) return;
+        if (this.needsAuthorize) await this.authorize();
+        this.client.onClose = () => this.handleDisconnect();
+        this.subscribeTicks();
+        if (this.settlementWaiter) {
+          this.log.info(`Re-checking open contract ${this.settlementWaiter.contractId}...`);
+          this.subscribeSettlement();
+        }
+        this.reconnecting = false;
+        this.log.info(`Reconnected after ${attempt} attempt${attempt > 1 ? 's' : ''}. Session continues: ${this.risk.summary()}`);
+        this.emit('reconnected', { attempts: attempt, time: Date.now() });
+        return;
+      } catch (err) {
+        this.log.warn(`Reconnect attempt ${attempt} failed: ${err.message.split('\n')[0]}`);
+      }
+    }
+    this.reconnecting = false;
+    this.stop(`connection lost; could not reconnect after ${max} attempts`);
   }
 
   stop(reason) {
@@ -151,6 +213,9 @@ export class Bot extends EventEmitter {
     this.busy = true;
     this.placeTrade(signal).catch((err) => {
       this.log.error(`Trade failed: ${err.message}`);
+      if (err.code === 'ConnectionClosed' && !this.cfg.paper) {
+        this.log.warn('The connection dropped while buying. If the buy went through, it shows in your Deriv statement but is not counted here.');
+      }
       if (/barrier/i.test(err.message)) {
         this.log.error('Run "npm run contracts" to see which barriers and durations Deriv accepts for this market.');
       }
@@ -269,21 +334,33 @@ export class Bot extends EventEmitter {
     this.settle(label, Number(result.profit), result.entry_spot, result.exit_spot);
   }
 
+  /** Resolves with the contract once Deriv reports it sold; survives reconnects. */
   waitForSettlement(contractId) {
     return new Promise((resolve, reject) => {
-      let subId;
-      const req = this.client.subscribe({ proposal_open_contract: 1, contract_id: contractId }, (msg) => {
-        if (msg.error) {
-          this.client.unsubscribe(req, subId);
-          return reject(new Error(msg.error.message));
-        }
-        subId ??= msg.subscription?.id;
-        const poc = msg.proposal_open_contract;
-        if (poc?.is_sold) {
-          this.client.unsubscribe(req, subId);
-          resolve(poc);
-        }
-      });
+      this.settlementWaiter = { contractId, resolve, reject };
+      this.subscribeSettlement();
+    });
+  }
+
+  subscribeSettlement() {
+    const w = this.settlementWaiter;
+    if (!w) return;
+    let subId;
+    const done = () => {
+      this.client.unsubscribe(req, subId);
+      if (this.settlementWaiter === w) this.settlementWaiter = null;
+    };
+    const req = this.client.subscribe({ proposal_open_contract: 1, contract_id: w.contractId }, (msg) => {
+      if (msg.error) {
+        done();
+        return w.reject(new Error(msg.error.message));
+      }
+      subId ??= msg.subscription?.id;
+      const poc = msg.proposal_open_contract;
+      if (poc?.is_sold) {
+        done();
+        w.resolve(poc);
+      }
     });
   }
 

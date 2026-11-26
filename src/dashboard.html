@@ -80,7 +80,7 @@
   .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); }
   .pill.running .dot { background: var(--good); }
   .pill.stopped .dot { background: var(--critical); border-radius: 2px; }
-  .pill.offline .dot { background: var(--warning); }
+  .pill.offline .dot, .pill.reconnecting .dot { background: var(--warning); }
   .badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); }
   .badge.real { border-color: var(--critical); color: var(--critical-text); }
   button {
@@ -390,16 +390,20 @@
     const st = $('status');
     const state = !online ? 'offline' : S.status;
     st.className = 'pill ' + state;
-    $('status-text').textContent = !online ? 'Disconnected' : S.status === 'running' ? 'Running' : S.status === 'stopped' ? 'Stopped' : 'Starting';
+    $('status-text').textContent = !online ? 'Disconnected'
+      : { running: 'Running', stopped: 'Stopped', reconnecting: 'Reconnecting' }[S.status] ?? 'Starting';
     const mode = $('mode');
     const real = S.account && !S.account.isVirtual && c.mode === 'LIVE';
     mode.textContent = c.mode === 'PAPER' ? 'PAPER' : real ? 'LIVE · REAL MONEY' : 'LIVE · DEMO';
     mode.className = 'badge' + (real ? ' real' : '');
-    $('stop').disabled = !online || S.status !== 'running';
+    $('stop').disabled = !online || !['running', 'reconnecting'].includes(S.status);
     const banner = $('banner');
     if (S.status === 'stopped') {
       banner.style.display = 'block';
       banner.textContent = `Bot stopped: ${S.stopReason}. Press Ctrl+C in the PowerShell window to close it.`;
+    } else if (online && S.status === 'reconnecting') {
+      banner.style.display = 'block';
+      banner.textContent = `Connection to Deriv lost. Reconnecting (attempt ${S.reconnectAttempt}); trading is paused and the session continues afterwards.`;
     } else if (!online) {
       banner.style.display = 'block';
       banner.textContent = 'Lost connection to the bot. It may have been closed; this page reconnects automatically.';

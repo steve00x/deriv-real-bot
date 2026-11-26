@@ -43,6 +43,12 @@ While the bot runs, open **http://localhost:3000** in your browser. It updates l
 
 The dashboard is only reachable from your own computer. When the bot stops, the page stays up so you can review the session; press Ctrl+C to close it. If you run two bots, the second one's dashboard is on port 3001. Set `DASHBOARD_PORT=0` to turn it off.
 
+## Reconnecting
+
+If the connection to Deriv drops, the bot pauses trading and reconnects by itself. It waits 2, 5, 10, 15, then 30 seconds between attempts, up to `RECONNECT_ATTEMPTS` (default 20; `0` stops instead). The session carries on afterwards: profit, trade count, stop loss and take profit keep counting from where they were. A live contract that was open when the connection dropped is checked again after reconnecting, so its result is still counted. In live mode each attempt gets a fresh one-time login URL from Deriv. The dashboard shows **Reconnecting** while this happens.
+
+If the connection drops in the middle of a buy, the bot can't tell whether Deriv completed it; it logs a warning, and any such trade shows in your Deriv statement but not in the bot's totals.
+
 ## Contracts (`CONTRACT=`)
 
 - `rise_fall` (default): Rise wins if the exit price is above the entry price, Fall if it is below. A tie loses both.
